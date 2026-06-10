@@ -22,5 +22,7 @@
         "pyo3zig/module.zig",
         "pyo3zig/pycell.zig",
         "pyo3zig/pyclass.zig",
+        "pyo3zig/panic.zig",
+        "pyo3zig/stubgen.zig",
     },
 }

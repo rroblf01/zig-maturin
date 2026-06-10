@@ -1,6 +1,10 @@
 const std = @import("std");
 const pz = @import("pyo3zig");
 
+// Opt into the panic safety net: a Zig panic becomes a Python exception
+// instead of aborting the interpreter.
+pub const panic = pz.panic;
+
 fn hello() []const u8 {
     return "Hello from pyo3zig!";
 }
@@ -16,6 +20,41 @@ fn double(x: f64) f64 {
 // Raw object passthrough: accepts and returns any Python object.
 fn identity(obj: ?*pz.PyObject) ?*pz.PyObject {
     return pz.Py_NewRef(obj);
+}
+
+// Container conversions (returned by value -> Python list / dict / tuple).
+fn make_array() [3]i64 {
+    return .{ 10, 20, 30 };
+}
+
+// kwargs + defaults: power(base, exp=2) -> base**exp
+fn power(base: i64, exp: i64) i64 {
+    var result: i64 = 1;
+    var n = exp;
+    while (n > 0) : (n -= 1) result *= base;
+    return result;
+}
+
+fn make_point() struct { x: i64, y: i64 } {
+    return .{ .x = 1, .y = 2 };
+}
+
+fn make_pair() struct { i64, f64 } {
+    return .{ 7, 1.5 };
+}
+
+// Triggers a Zig panic; with the panic handler installed it surfaces as a
+// Python exception instead of crashing the interpreter.
+fn boom() i64 {
+    @panic("boom from Zig");
+}
+
+// Safety-check panic (index out of bounds) in ReleaseSafe/Debug.
+fn oob() i64 {
+    const arr = [_]i64{ 1, 2, 3 };
+    var i: usize = 9;
+    _ = &i; // force a runtime index so the bounds check isn't comptime-folded
+    return arr[i];
 }
 
 fn greet(name: []const u8) !pz.PyString {
@@ -82,6 +121,22 @@ fn get_deinit_count() i64 {
     return deinit_counter;
 }
 
+// Comptime-generated .pyi stub for the module's functions.
+const STUB = pz.moduleStub(.{
+    .{ .name = "hello", .func = hello },
+    .{ .name = "add", .func = add, .args = &.{ "a", "b" } },
+    .{ .name = "double", .func = double, .args = &.{"x"} },
+    .{ .name = "greet", .func = greet, .args = &.{"name"} },
+    .{ .name = "make_array", .func = make_array },
+    .{ .name = "make_point", .func = make_point },
+    .{ .name = "make_pair", .func = make_pair },
+    .{ .name = "power", .func = power, .args = &.{ "base", "exp" } },
+});
+
+fn __pyi__() []const u8 {
+    return STUB;
+}
+
 const Mod = pz.pyModule("pyo3zig_demo", .{
     .doc = "Demo module built with pyo3zig.",
     .functions = &[_]pz.PyMethodDef{
@@ -89,6 +144,16 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("add", add),
         pz.pyFnNamed("double", double),
         pz.pyFnNamed("identity", identity),
+        pz.pyFnNamed("make_array", make_array),
+        pz.pyFnNamed("make_point", make_point),
+        pz.pyFnNamed("make_pair", make_pair),
+        pz.pyFnNamed("boom", boom),
+        pz.pyFnNamed("oob", oob),
+        pz.pyFnKw("power", power, .{
+            .args = &.{ "base", "exp" },
+            .defaults = .{ .exp = @as(i64, 2) },
+        }),
+        pz.pyFnNamed("__pyi__", __pyi__),
         pz.pyFnNamed("greet", greet),
         pz.pyFnNamed("repeat_bytes", repeat_bytes),
         pz.pyFnNamed("get_deinit_count", get_deinit_count),

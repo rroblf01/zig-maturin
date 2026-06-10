@@ -230,6 +230,10 @@ def build_project(
         so_suffix = target_to_so_suffix(target)
         abi_tag = python_version
 
+        # Native builds: embed the comptime-generated type stub. Cross builds
+        # can't import the artifact, so this returns None and is skipped.
+        pyi = extract_stub(built_so, mod_name, so_suffix)
+
         wheel_path = build_wheel(
             module_name=mod_name,
             version=config.version,
@@ -244,6 +248,7 @@ def build_project(
             requires_python=config.requires_python,
             license=config.license,
             classifiers=config.classifiers,
+            pyi=pyi,
         )
         wheels.append(wheel_path)
         print(f"Created wheel: {wheel_path}")
@@ -252,6 +257,35 @@ def build_project(
             install_wheel_develop(wheel_path, mod_name, built_so, so_suffix)
 
     return wheels
+
+
+def extract_stub(so_path: Path, module_name: str, so_suffix: str) -> str | None:
+    """Import the freshly-built module and read its comptime `__pyi__()` stub.
+
+    Only works for native builds (the artifact must be importable on this host);
+    cross-built artifacts fail to import and are skipped silently.
+    """
+    import shutil
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp())
+    dest = tmp / f"{module_name}{so_suffix if so_suffix != '.pyd' else '.so'}"
+    try:
+        shutil.copy2(so_path, dest)
+        code = (
+            f"import sys; sys.path.insert(0, {str(tmp)!r}); import {module_name} as m; "
+            f"print(m.__pyi__(), end='') if hasattr(m, '__pyi__') else None"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout
+    except Exception:
+        pass
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return None
 
 
 def build_sdist(config: ZigMaturinConfig, out: str = "dist") -> Path:

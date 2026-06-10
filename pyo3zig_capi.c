@@ -1,4 +1,37 @@
 #include <Python.h>
+#include <setjmp.h>
+#include <string.h>
+
+/* --- Panic safety net -----------------------------------------------------
+ * Zig has no stack unwinding, so a panic would normally abort the whole
+ * interpreter. pz_guard() runs the extension body inside a setjmp frame; the
+ * Zig panic handler calls pz_panic_longjmp() to jump back here and return NULL
+ * (with a Python exception already set) instead of crashing. setjmp must live
+ * in a frame that stays alive while the body runs, hence the callback shape.
+ * Nested calls are supported by save/restore of the jump buffer.
+ */
+static _Thread_local jmp_buf pz_jmp;
+static _Thread_local int pz_jmp_active = 0;
+
+PyObject* pz_guard(PyObject* (*fn)(void*), void* ctx) {
+    jmp_buf saved;
+    int saved_active = pz_jmp_active;
+    memcpy(&saved, &pz_jmp, sizeof(jmp_buf));
+    pz_jmp_active = 1;
+    PyObject* result;
+    if (setjmp(pz_jmp)) {
+        result = NULL; /* arrived via longjmp; exception already set */
+    } else {
+        result = fn(ctx);
+    }
+    pz_jmp_active = saved_active;
+    memcpy(&pz_jmp, &saved, sizeof(jmp_buf));
+    return result;
+}
+
+int pz_guard_active(void) { return pz_jmp_active; }
+
+void pz_panic_longjmp(void) { longjmp(pz_jmp, 1); }
 
 PyObject* pyo3zig_PyExc_TypeError(void) { return PyExc_TypeError; }
 PyObject* pyo3zig_PyExc_ValueError(void) { return PyExc_ValueError; }

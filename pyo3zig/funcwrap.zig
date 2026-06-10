@@ -92,8 +92,15 @@ pub fn wrap(comptime func: anytype, comptime name: [:0]const u8, comptime doc: [
     const flags: c_int = zm.METH_VARARGS;
 
     const Wrapper = struct {
+        const Ctx = struct { self: ?*zm.PyObject, args: ?*zm.PyObject };
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return wrapFnInner(func, fn_info, c.self, c.args);
+        }
+        // Run the body under the panic safety net (see pyo3zig_capi.c).
         pub fn trampoline(self: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
-            return wrapFnInner(func, fn_info, self, args_obj);
+            var ctx = Ctx{ .self = self, .args = args_obj };
+            return zm.pz_guard(&thunk, &ctx);
         }
     };
 
@@ -115,6 +122,108 @@ pub fn pyFn(comptime _: anytype) zm.PyMethodDef {
 
 pub fn pyFnNamed(comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
     return wrap(func, name, "");
+}
+
+/// Register a function with keyword-argument and default support. Zig
+/// reflection has no parameter names, so they are supplied explicitly:
+///
+///     pz.pyFnKw("greet", greet, .{
+///         .args = &.{ "name", "excited" },
+///         .defaults = .{ .excited = false },   // optional, by name
+///     });
+///
+/// Callers may then use positional or keyword arguments; omitted parameters
+/// fall back to their default (a TypeError is raised if none is set).
+pub fn pyFnKw(comptime name: [:0]const u8, comptime func: anytype, comptime spec: anytype) zm.PyMethodDef {
+    const FnType = @TypeOf(func);
+    const fn_info = @typeInfo(FnType).@"fn";
+    const params = fn_info.params;
+    const arg_names = spec.args;
+    if (arg_names.len != params.len) {
+        @compileError("pyFnKw: .args length must match the function's parameter count");
+    }
+    const has_defaults = @hasField(@TypeOf(spec), "defaults");
+
+    const Wrapper = struct {
+        const Ctx = struct { args: ?*zm.PyObject, kwargs: ?*zm.PyObject };
+
+        fn inner(args_obj: ?*zm.PyObject, kwargs_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const npos: isize = if (args_obj) |a| zm.PyTuple_Size(a) else 0;
+            if (npos > @as(isize, @intCast(params.len))) {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "too many positional arguments");
+                return null;
+            }
+
+            const TupleType = paramTypesTupleDirect(params);
+            var call_args: TupleType = undefined;
+
+            inline for (params, 0..) |param, i| {
+                const ParamT = param.type.?;
+                const pname = @as([*:0]const u8, @ptrCast(arg_names[i].ptr));
+                var arg_obj: ?*zm.PyObject = null;
+                if (i < npos) {
+                    arg_obj = zm.PyTuple_GetItem(args_obj, @as(isize, @intCast(i)));
+                } else if (kwargs_obj != null) {
+                    arg_obj = zm.PyDict_GetItemString(kwargs_obj, pname);
+                }
+
+                if (arg_obj) |o| {
+                    call_args[i] = conversion.fromPyObject(ParamT, o) catch |err| {
+                        setConversionError(err);
+                        return null;
+                    };
+                } else if (comptime has_defaults and @hasField(@TypeOf(spec.defaults), arg_names[i])) {
+                    call_args[i] = @field(spec.defaults, arg_names[i]);
+                } else {
+                    var buf: [128]u8 = std.mem.zeroes([128]u8);
+                    const msg = std.fmt.bufPrint(&buf, "missing required argument '{s}'", .{arg_names[i]}) catch "missing required argument";
+                    buf[@min(msg.len, buf.len - 1)] = 0;
+                    zm.PyErr_SetString(zm.PyExc_TypeError(), @ptrCast(&buf));
+                    return null;
+                }
+            }
+
+            return callAndConvert(func, fn_info, call_args);
+        }
+
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.args, c.kwargs);
+        }
+
+        pub fn trampoline(self: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            _ = self;
+            var ctx = Ctx{ .args = args_obj, .kwargs = kwargs_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+
+    return zm.PyMethodDef{
+        .ml_name = name,
+        .ml_meth = @ptrCast(&Wrapper.trampoline),
+        .ml_flags = zm.METH_VARARGS | zm.METH_KEYWORDS,
+        .ml_doc = null,
+    };
+}
+
+fn callAndConvert(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, call_args: anytype) ?*zm.PyObject {
+    const return_type = fn_info.return_type;
+    if (return_type) |ret| {
+        if (ret == void) {
+            @call(.auto, func, call_args);
+            return zm.Py_NewRef(zm.Py_None());
+        }
+        if (@typeInfo(ret) == .error_union) {
+            const result = @call(.auto, func, call_args) catch |err| {
+                errors.setPyException(err);
+                return null;
+            };
+            return returnToPyObjectValue(result);
+        }
+        return returnToPyObjectValue(@call(.auto, func, call_args));
+    }
+    @call(.auto, func, call_args);
+    return zm.Py_NewRef(zm.Py_None());
 }
 
 

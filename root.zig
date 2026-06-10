@@ -112,6 +112,10 @@ pub const Py_NotImplemented = pycall.Py_NotImplemented;
 pub const PyMem_RawMalloc = pycall.PyMem_RawMalloc;
 pub const PyMem_RawFree = pycall.PyMem_RawFree;
 
+pub const pz_guard = pycall.pz_guard;
+pub const pz_guard_active = pycall.pz_guard_active;
+pub const pz_panic_longjmp = pycall.pz_panic_longjmp;
+
 pub const PyType_FromSpec = pycall.PyType_FromSpec;
 pub const PyType_FromSpecWithBases = pycall.PyType_FromSpecWithBases;
 pub const PyType_Ready = pycall.PyType_Ready;

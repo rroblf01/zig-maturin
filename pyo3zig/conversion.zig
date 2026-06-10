@@ -51,10 +51,26 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
             return zm.Py_NewRef(zm.Py_None());
         },
         .pointer => |info| {
-            if (info.size == .slice and info.child == u8) {
-                return zm.PyUnicode_FromStringAndSize(value.ptr, @as(isize, @intCast(value.len)));
+            if (info.size == .slice) {
+                if (info.child == u8) {
+                    return zm.PyUnicode_FromStringAndSize(value.ptr, @as(isize, @intCast(value.len)));
+                }
+                // []T (T != u8) -> Python list.
+                return sliceToList(value);
             }
             return error.NotImplemented;
+        },
+        .array => {
+            // [N]T -> Python list (a string array [N]u8 is treated as a list of
+            // ints; use a slice for text).
+            return sliceToList(value[0..]);
+        },
+        .@"struct" => |info| {
+            // Wrapper types (PyString, PyList, ...) own a reference and expose
+            // `borrow`; they must transfer it, not be serialized field-by-field.
+            if (@hasDecl(T, "borrow")) return value.borrow();
+            if (info.is_tuple) return tupleToPyTuple(value);
+            return structToDict(value);
         },
         else => {
             if (@hasDecl(T, "borrow")) {
@@ -66,6 +82,42 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
             @compileError("Cannot convert " ++ @typeName(T) ++ " to Python object");
         },
     }
+}
+
+fn sliceToList(value: anytype) ConversionError!?*zm.PyObject {
+    const list = zm.PyList_New(@as(isize, @intCast(value.len))) orelse return error.MemoryError;
+    errdefer zm.Py_XDECREF(list);
+    for (value, 0..) |elem, i| {
+        const py_elem = try toPyObject(elem);
+        // PyList_SetItem steals the reference to py_elem.
+        _ = zm.PyList_SetItem(list, @as(isize, @intCast(i)), py_elem);
+    }
+    return list;
+}
+
+fn tupleToPyTuple(value: anytype) ConversionError!?*zm.PyObject {
+    const fields = std.meta.fields(@TypeOf(value));
+    const tup = zm.PyTuple_New(@as(isize, @intCast(fields.len))) orelse return error.MemoryError;
+    errdefer zm.Py_XDECREF(tup);
+    inline for (fields, 0..) |field, i| {
+        const py_elem = try toPyObject(@field(value, field.name));
+        // PyTuple_SetItem steals the reference.
+        _ = zm.PyTuple_SetItem(tup, @as(isize, @intCast(i)), py_elem);
+    }
+    return tup;
+}
+
+fn structToDict(value: anytype) ConversionError!?*zm.PyObject {
+    const dict = zm.PyDict_New() orelse return error.MemoryError;
+    errdefer zm.Py_XDECREF(dict);
+    inline for (std.meta.fields(@TypeOf(value))) |field| {
+        const py_val = try toPyObject(@field(value, field.name));
+        // PyDict_SetItemString does NOT steal; it keeps its own reference.
+        defer zm.Py_XDECREF(py_val);
+        const key = @as([*:0]const u8, @ptrCast(field.name.ptr));
+        if (zm.PyDict_SetItemString(dict, key, py_val) != 0) return error.PythonValueError;
+    }
+    return dict;
 }
 
 pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {

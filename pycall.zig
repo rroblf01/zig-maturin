@@ -3,6 +3,15 @@ const pytypes = @import("pytypes.zig");
 pub const PyObject = pytypes.PyObject;
 pub const PyModuleDef = pytypes.PyModuleDef;
 
+// Panic safety net (defined in pyo3zig_capi.c). pz_guard runs a thunk under a
+// setjmp frame; pz_panic_longjmp jumps back to it from the Zig panic handler.
+pub extern fn pz_guard(
+    func: *const fn (?*anyopaque) callconv(.c) ?*PyObject,
+    ctx: ?*anyopaque,
+) callconv(.c) ?*PyObject;
+pub extern fn pz_guard_active() callconv(.c) c_int;
+pub extern fn pz_panic_longjmp() callconv(.c) noreturn;
+
 // Module creation
 pub extern fn PyModule_Create2(?*PyModuleDef, c_int) callconv(.c) ?*PyObject;
 pub fn PyModule_Create(def: ?*PyModuleDef) ?*PyObject {

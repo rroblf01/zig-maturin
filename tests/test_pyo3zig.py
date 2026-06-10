@@ -38,6 +38,36 @@ check("greet('World')", m.greet("World") == "Hello, World!")
 check("greet('')", m.greet("") == "Hello, !")
 check("greet('Alice')", m.greet("Alice") == "Hello, Alice!")
 
+# test_container_conversions
+check("make_array -> list", m.make_array() == [10, 20, 30])
+check("make_point -> dict", m.make_point() == {"x": 1, "y": 2})
+check("make_pair -> tuple", m.make_pair() == (7, 1.5))
+
+# test_panic_to_exception (Zig panic must not crash the interpreter)
+try:
+    m.boom()
+    check("boom raises", False, "no exception")
+except Exception as e:
+    check("boom raises RuntimeError", isinstance(e, RuntimeError), repr(e))
+try:
+    m.oob()
+    check("oob raises", False, "no exception")
+except Exception as e:
+    check("oob raises RuntimeError", isinstance(e, RuntimeError), repr(e))
+# interpreter still usable after panics
+check("alive after panic", m.add(2, 3) == 5)
+
+# test_kwargs_and_defaults
+check("power default exp", m.power(3) == 9)
+check("power positional", m.power(2, 10) == 1024)
+check("power keyword", m.power(base=5, exp=3) == 125)
+check("power mixed", m.power(2, exp=5) == 32)
+try:
+    m.power()
+    check("power() missing arg", False, "no exception")
+except TypeError:
+    check("power() missing arg", True)
+
 # test_error_arg_count
 try:
     m.add(1)

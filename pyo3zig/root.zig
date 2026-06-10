@@ -11,12 +11,21 @@ pub const module = @import("module.zig");
 pub const pycell = @import("pycell.zig");
 pub const pyclass = @import("pyclass.zig");
 
+pub const panic = @import("panic.zig").panic;
+pub const panicFn = @import("panic.zig").panicFn;
+
+pub const stubgen = @import("stubgen.zig");
+pub const pyType = stubgen.pyType;
+pub const funcStub = stubgen.funcStub;
+pub const moduleStub = stubgen.moduleStub;
+
 pub const pyModule = module.pyModule;
 pub const exportModule = module.exportModule;
 pub const PyClass = pyclass.PyClass;
 pub const PyCell = pycell.PyCell;
 pub const pyFn = funcwrap.pyFn;
 pub const pyFnNamed = funcwrap.pyFnNamed;
+pub const pyFnKw = funcwrap.pyFnKw;
 pub const wrap = funcwrap.wrap;
 pub const wrapNamed = funcwrap.wrapNamed;
 pub const wrapMethodNamed = pyclass.wrapMethodNamed;
