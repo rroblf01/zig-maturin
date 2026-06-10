@@ -455,6 +455,86 @@ check("deinit count after create", m.get_deinit_count() == count_before)
 del d
 check("deinit count after delete", m.get_deinit_count() == count_before + 1)
 
+# test_bitwise_operators
+b = m.Bits(0b1100)
+check("Bits & ", int(b & 0b1010) == 0b1000)
+check("Bits | ", int(b | 0b0011) == 0b1111)
+check("Bits ^ ", int(b ^ 0b1010) == 0b0110)
+check("Bits <<", int(b << 2) == 0b110000)
+check("Bits >>", int(b >> 2) == 0b11)
+check("Bits ~ ", int(~m.Bits(0)) == -1)
+
+# test_unary_abs_pos
+check("abs(Bits)", int(abs(m.Bits(-5))) == 5)
+check("pos Bits", int(+m.Bits(7)) == 7)
+check("abs(Money)", abs(m.Money(-7)).cents == 7)
+check("pos Money", (+m.Money(5)).cents == 5)
+
+# test_inplace_bitwise
+v = m.Bits(0b1100)
+v &= 0b1010
+check("Bits &=", int(v) == 0b1000)
+v = m.Bits(0b1100)
+v |= 0b0011
+check("Bits |=", int(v) == 0b1111)
+v = m.Bits(0b1100)
+v ^= 0b1010
+check("Bits ^=", int(v) == 0b0110)
+v = m.Bits(1)
+v <<= 4
+check("Bits <<=", int(v) == 16)
+v = m.Bits(16)
+v >>= 4
+check("Bits >>=", int(v) == 1)
+
+# test_inplace_arithmetic_extra
+mm = m.Money(10)
+mm %= 3
+check("Money %=", mm.cents == 1)
+mm = m.Money(3)
+mm **= 3
+check("Money **=", mm.cents == 27)
+
+# test_truediv_returns_float
+check("Money / -> float", m.Money(7) / 2 == 3.5)
+
+# test_delitem
+bag = m.Bag()
+del bag[5]
+del bag[3]
+check("__delitem__", bag.deleted == 8)
+
+# test_reversed_custom
+check("custom __reversed__", list(reversed(m.Range(2, 9))) == [9, 2])
+
+# test_format
+g = m.Greeter(42)
+check("format(g)", format(g) == "Greeter(42)")
+check("f-string spec", f"{g:hex}" == "[hex=42]")
+
+# test_unhashable
+u = m.Unhashable(1)
+check("__hash__ is None", m.Unhashable.__hash__ is None)
+check("Unhashable eq", m.Unhashable(1) == m.Unhashable(1))
+try:
+    hash(u)
+    check("hash raises", False, "no exception")
+except TypeError:
+    check("hash raises", True)
+try:
+    {u: 1}
+    check("dict key raises", False, "no exception")
+except TypeError:
+    check("dict key raises", True)
+
+# test_module_attribute_set
+check("type.__module__", m.Greeter.__module__ == "pyo3zig_demo")
+
+# test_bytearray_argument
+check("sum_bytes(bytearray)", m.sum_bytes(bytearray(b"\x01\x02\x03")) == 6)
+check("sum_bytes(bytes)", m.sum_bytes(b"\x01\x02\x03") == 6)
+check("sum_bytes(str)", m.sum_bytes("ABC") == 65 + 66 + 67)
+
 total = passed + failed
 print(
     f"\nResults: {passed}/{total} passed"

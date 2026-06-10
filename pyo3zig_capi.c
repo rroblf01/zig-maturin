@@ -103,3 +103,9 @@ PyObject* pyo3zig_PyDict_Type(void) { return (PyObject*)&PyDict_Type; }
 PyObject* pyo3zig_PyTuple_Type(void) { return (PyObject*)&PyTuple_Type; }
 PyObject* pyo3zig_PyType_Type(void) { return (PyObject*)&PyType_Type; }
 PyObject* pyo3zig_PyBytes_Type(void) { return (PyObject*)&PyBytes_Type; }
+PyObject* pyo3zig_PyByteArray_Type(void) { return (PyObject*)&PyByteArray_Type; }
+
+/* The canonical "this type is unhashable" hash function. CPython special-cases
+ * this exact pointer in tp_hash to expose __hash__ as None (the semantics of a
+ * class that defines __eq__ but no __hash__). */
+void* pyo3zig_HashNotImplemented(void) { return (void*)PyObject_HashNotImplemented; }

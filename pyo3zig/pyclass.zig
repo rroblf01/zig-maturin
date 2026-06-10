@@ -356,6 +356,37 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_iadd = @hasDecl(T, "__iadd__");
     const has_isub = @hasDecl(T, "__isub__");
     const has_imul = @hasDecl(T, "__imul__");
+    // Unary number ops: abs(x), +x, ~x.
+    const has_abs = @hasDecl(T, "__abs__");
+    const has_pos = @hasDecl(T, "__pos__");
+    const has_invert = @hasDecl(T, "__invert__");
+    // Bitwise / shift binary ops (same dispatch as the arithmetic ones, no
+    // reflected form).
+    const has_and = @hasDecl(T, "__and__");
+    const has_or = @hasDecl(T, "__or__");
+    const has_xor = @hasDecl(T, "__xor__");
+    const has_lshift = @hasDecl(T, "__lshift__");
+    const has_rshift = @hasDecl(T, "__rshift__");
+    // The remaining in-place operators (mutate self, return self).
+    const has_itruediv = @hasDecl(T, "__itruediv__");
+    const has_ifloordiv = @hasDecl(T, "__ifloordiv__");
+    const has_imod = @hasDecl(T, "__imod__");
+    const has_ipow = @hasDecl(T, "__ipow__");
+    const has_imatmul = @hasDecl(T, "__imatmul__");
+    const has_iand = @hasDecl(T, "__iand__");
+    const has_ior = @hasDecl(T, "__ior__");
+    const has_ixor = @hasDecl(T, "__ixor__");
+    const has_ilshift = @hasDecl(T, "__ilshift__");
+    const has_irshift = @hasDecl(T, "__irshift__");
+    // Item deletion (`del obj[k]`) shares the mp_ass_subscript slot with
+    // __setitem__; reversed()/format() are looked up as plain methods.
+    const has_delitem = @hasDecl(T, "__delitem__");
+    const has_assitem = has_setitem or has_delitem;
+    const has_reversed = @hasDecl(T, "__reversed__");
+    const has_format = @hasDecl(T, "__format__");
+    // Python semantics: defining __eq__ without __hash__ makes instances
+    // unhashable. Reproduce it (CPython would otherwise keep identity hashing).
+    const auto_unhashable = has_eq and !has_hash;
     // Dynamic attribute access (fall back to generic lookup).
     const has_getattr = @hasDecl(T, "__getattr__");
     const has_setattr = @hasDecl(T, "__setattr__");
@@ -632,14 +663,35 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         const Ctx = struct { self: ?*zm.PyObject, key: ?*zm.PyObject, val: ?*zm.PyObject };
         fn inner(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject, val_obj: ?*zm.PyObject) c_int {
             const ptr = Cell.ptrFromObj(self_obj);
-            if (val_obj == null) {
-                zm.PyErr_SetString(zm.PyExc_TypeError(), "item deletion not supported");
-                return -1;
-            }
-            const fn_info = @typeInfo(@TypeOf(T.__setitem__)).@"fn";
             var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
             defer arena.deinit();
             const a = arena.allocator();
+            // A null value means `del obj[key]` -> __delitem__.
+            if (val_obj == null) {
+                if (comptime has_delitem) {
+                    const di = @typeInfo(@TypeOf(T.__delitem__)).@"fn";
+                    const key = conversion.fromPyObject(di.params[1].type.?, key_obj, a) catch |err| {
+                        funcwrap.setConversionError(err);
+                        return -1;
+                    };
+                    if (@typeInfo(di.return_type orelse void) == .error_union) {
+                        T.__delitem__(ptr, key) catch |err| {
+                            errors.setPyExceptionIfNeeded(err);
+                            return -1;
+                        };
+                    } else {
+                        T.__delitem__(ptr, key);
+                    }
+                    return 0;
+                }
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "item deletion not supported");
+                return -1;
+            }
+            if (comptime !has_setitem) {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "item assignment not supported");
+                return -1;
+            }
+            const fn_info = @typeInfo(@TypeOf(T.__setitem__)).@"fn";
             const key = conversion.fromPyObject(fn_info.params[1].type.?, key_obj, a) catch |err| {
                 funcwrap.setConversionError(err);
                 return -1;
@@ -859,6 +911,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const ModWrapper = BinaryOp(if (has_mod) T.__mod__ else {}, false, {});
     const PowWrapper = BinaryOp(if (has_pow) T.__pow__ else {}, false, {});
     const MatMulWrapper = BinaryOp(if (has_matmul) T.__matmul__ else {}, false, {});
+    const AndWrapper = BinaryOp(if (has_and) T.__and__ else {}, false, {});
+    const OrWrapper = BinaryOp(if (has_or) T.__or__ else {}, false, {});
+    const XorWrapper = BinaryOp(if (has_xor) T.__xor__ else {}, false, {});
+    const LshiftWrapper = BinaryOp(if (has_lshift) T.__lshift__ else {}, false, {});
+    const RshiftWrapper = BinaryOp(if (has_rshift) T.__rshift__ else {}, false, {});
 
     const NegWrapper = struct {
         fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
@@ -880,6 +937,24 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             return zm.pz_guard_int(&thunk, @ptrCast(self_obj));
         }
     };
+
+    // Generic unary number op (abs/pos/invert): like __neg__, a result of type
+    // T is wrapped into a new instance, any other type converted normally.
+    const UnaryOp = struct {
+        fn make(comptime func: anytype) type {
+            return struct {
+                fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+                    return NumberWrapper.callUnary(func, @as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+                }
+                fn op(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+                    return zm.pz_guard(&thunk, @ptrCast(self_obj));
+                }
+            };
+        }
+    }.make;
+    const AbsWrapper = UnaryOp(if (has_abs) T.__abs__ else {});
+    const PosWrapper = UnaryOp(if (has_pos) T.__pos__ else {});
+    const InvertWrapper = UnaryOp(if (has_invert) T.__invert__ else {});
 
     // Scalar-returning unary conversions: __int__, __float__, __index__.
     const ScalarUnary = struct {
@@ -913,12 +988,27 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     var ctx = BinCtx{ .a = a_obj, .b = b_obj };
                     return zm.pz_guard(&thunk, &ctx);
                 }
+                // nb_inplace_power is ternary (a, b, modulo); modulo ignored.
+                fn powop(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject, _: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+                    var ctx = BinCtx{ .a = a_obj, .b = b_obj };
+                    return zm.pz_guard(&thunk, &ctx);
+                }
             };
         }
     }.make;
     const IaddWrapper = InplaceOp(if (has_iadd) T.__iadd__ else {});
     const IsubWrapper = InplaceOp(if (has_isub) T.__isub__ else {});
     const ImulWrapper = InplaceOp(if (has_imul) T.__imul__ else {});
+    const ItruedivWrapper = InplaceOp(if (has_itruediv) T.__itruediv__ else {});
+    const IfloordivWrapper = InplaceOp(if (has_ifloordiv) T.__ifloordiv__ else {});
+    const ImodWrapper = InplaceOp(if (has_imod) T.__imod__ else {});
+    const IpowWrapper = InplaceOp(if (has_ipow) T.__ipow__ else {});
+    const ImatmulWrapper = InplaceOp(if (has_imatmul) T.__imatmul__ else {});
+    const IandWrapper = InplaceOp(if (has_iand) T.__iand__ else {});
+    const IorWrapper = InplaceOp(if (has_ior) T.__ior__ else {});
+    const IxorWrapper = InplaceOp(if (has_ixor) T.__ixor__ else {});
+    const IlshiftWrapper = InplaceOp(if (has_ilshift) T.__ilshift__ else {});
+    const IrshiftWrapper = InplaceOp(if (has_irshift) T.__irshift__ else {});
 
     // tp_getattro: only consulted when normal attribute lookup fails, matching
     // Python's __getattr__ semantics. __getattr__(self, name: []const u8).
@@ -1204,6 +1294,8 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 }};
                 if (has_exit) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__exit__", T.__exit__)};
                 if (has_reduce) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__reduce__", T.__reduce__)};
+                if (has_reversed) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__reversed__", T.__reversed__)};
+                if (has_format) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__format__", T.__format__)};
                 break :blk arr;
             };
             const has_any_method = has_methods or auto_methods.len > 0;
@@ -1235,10 +1327,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_str) slot_count += 1;
             if (has_repr) slot_count += 1;
             if (has_hash) slot_count += 1;
+            if (auto_unhashable) slot_count += 1;
             if (has_richcompare) slot_count += 1;
             if (has_len) slot_count += 1;
             if (has_getitem) slot_count += 1;
-            if (has_setitem) slot_count += 1;
+            if (has_assitem) slot_count += 1;
             if (has_contains) slot_count += 1;
             if (has_next) slot_count += 1;
             if (has_iter) slot_count += 1;
@@ -1260,6 +1353,24 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_iadd) slot_count += 1;
             if (has_isub) slot_count += 1;
             if (has_imul) slot_count += 1;
+            if (has_abs) slot_count += 1;
+            if (has_pos) slot_count += 1;
+            if (has_invert) slot_count += 1;
+            if (has_and) slot_count += 1;
+            if (has_or) slot_count += 1;
+            if (has_xor) slot_count += 1;
+            if (has_lshift) slot_count += 1;
+            if (has_rshift) slot_count += 1;
+            if (has_itruediv) slot_count += 1;
+            if (has_ifloordiv) slot_count += 1;
+            if (has_imod) slot_count += 1;
+            if (has_ipow) slot_count += 1;
+            if (has_imatmul) slot_count += 1;
+            if (has_iand) slot_count += 1;
+            if (has_ior) slot_count += 1;
+            if (has_ixor) slot_count += 1;
+            if (has_ilshift) slot_count += 1;
+            if (has_irshift) slot_count += 1;
             if (has_getattr) slot_count += 1;
             if (has_setattr) slot_count += 1;
             if (has_buffer) slot_count += 1;
@@ -1294,6 +1405,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_hash, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&HashWrapper.hash))) };
                 slot_idx += 1;
             }
+            if (auto_unhashable) {
+                // CPython recognizes this exact pointer and exposes __hash__ as
+                // None (matching a Python class with __eq__ and no __hash__).
+                slots[slot_idx] = .{ .slot = zm.Py_tp_hash, .pfunc = zm.HashNotImplemented() };
+                slot_idx += 1;
+            }
             if (has_richcompare) {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_richcompare, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&RichcompareWrapper.richcompare))) };
                 slot_idx += 1;
@@ -1306,7 +1423,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_mp_subscript, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&GetItemWrapper.getitem))) };
                 slot_idx += 1;
             }
-            if (has_setitem) {
+            if (has_assitem) {
                 slots[slot_idx] = .{ .slot = zm.Py_mp_ass_subscript, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&SetItemWrapper.setitem))) };
                 slot_idx += 1;
             }
@@ -1393,6 +1510,78 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
             if (has_imul) {
                 slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_multiply, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&ImulWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_abs) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_absolute, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&AbsWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_pos) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_positive, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&PosWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_invert) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_invert, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&InvertWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_and) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_and, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&AndWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_or) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_or, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&OrWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_xor) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_xor, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&XorWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_lshift) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_lshift, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&LshiftWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_rshift) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_rshift, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&RshiftWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_itruediv) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_true_divide, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&ItruedivWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_ifloordiv) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_floor_divide, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IfloordivWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_imod) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_remainder, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&ImodWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_ipow) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_power, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IpowWrapper.powop))) };
+                slot_idx += 1;
+            }
+            if (has_imatmul) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_matrix_multiply, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&ImatmulWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_iand) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_and, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IandWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_ior) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_or, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IorWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_ixor) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_xor, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IxorWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_ilshift) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_lshift, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IlshiftWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_irshift) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_rshift, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IrshiftWrapper.op))) };
                 slot_idx += 1;
             }
             if (has_getattr) {

@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **Bitwise & shift operators**: `__and__`, `__or__`, `__xor__`, `__lshift__`,
+  `__rshift__` (same mixed-operand dispatch as the arithmetic ops).
+- **Unary number ops**: `__abs__`, `__pos__`, `__invert__`.
+- **Complete in-place operator set**: adds `__itruediv__`, `__ifloordiv__`,
+  `__imod__`, `__ipow__`, `__imatmul__`, `__iand__`, `__ior__`, `__ixor__`,
+  `__ilshift__`, `__irshift__` (joining `__iadd__`/`__isub__`/`__imul__`).
+- **Item deletion**: `__delitem__` (`del obj[key]`), sharing the assignment slot.
+- **`__reversed__`** and **`__format__`** (auto-registered; power `reversed()`
+  and `format()` / f-string specs).
+- **Unhashable by `__eq__`**: a class that defines `__eq__` without `__hash__` is
+  now unhashable (`__hash__ is None`), matching Python's own class semantics.
+- **`bytearray` arguments** decode to a borrowed `[]const u8` (alongside `bytes`
+  and `str`).
+- **`__module__` on every class**: types now report their owning module, fixing
+  `repr`, pickling, and CPython 3.13's dict-key error message (which reads
+  `type.__module__`).
 - **Subclassing from Python**: value classes (no `__deinit__`, no PyObject
   fields) set `Py_TPFLAGS_BASETYPE`, so `class Sub(MyClass): ...` inherits
   fields, methods, and operators. Instances now allocate via the type's own
@@ -52,10 +68,9 @@ All notable changes to this project are documented here. The format is based on
   subclassing classes that need a custom destructor — both need teardown
   orchestration beyond this release.
 - **weakref** support (requires weakref-clearing in a custom dealloc).
-- **Inheritance / subclassing from Python** is deferred: correct support needs
-  custom-dealloc orchestration for a subclass's managed `__dict__` and GC, which
-  is out of scope for this release. `Py_TPFLAGS_BASETYPE` is intentionally not
-  set, so attempts to subclass raise a clear error rather than risk a crash.
+- **Subclassing classes that need a custom destructor** (`__deinit__` or GC
+  classes): `Py_TPFLAGS_BASETYPE` is set only for value classes, where CPython's
+  default dealloc safely handles a subclass's managed `__dict__` and GC.
 
 ## [0.2.0] - 2026-06-10
 

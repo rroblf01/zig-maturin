@@ -157,6 +157,11 @@ pub const PyUnicode_DecodeUTF8 = pycall.PyUnicode_DecodeUTF8;
 pub const PyBytes_FromString = pycall.PyBytes_FromString;
 pub const PyBytes_AsString = pycall.PyBytes_AsString;
 
+pub const PyByteArray_Check = pycall.PyByteArray_Check;
+pub const PyByteArray_AsString = pycall.PyByteArray_AsString;
+pub const PyByteArray_Size = pycall.PyByteArray_Size;
+pub const HashNotImplemented = pycall.HashNotImplemented;
+
 pub const Py_XNewRef = pycall.Py_XNewRef;
 
 pub const PyModuleDef_Init = pycall.PyModuleDef_Init;
@@ -196,6 +201,24 @@ pub const Py_nb_index = pytypes.Py_nb_index;
 pub const Py_nb_inplace_add = pytypes.Py_nb_inplace_add;
 pub const Py_nb_inplace_subtract = pytypes.Py_nb_inplace_subtract;
 pub const Py_nb_inplace_multiply = pytypes.Py_nb_inplace_multiply;
+pub const Py_nb_absolute = pytypes.Py_nb_absolute;
+pub const Py_nb_positive = pytypes.Py_nb_positive;
+pub const Py_nb_invert = pytypes.Py_nb_invert;
+pub const Py_nb_and = pytypes.Py_nb_and;
+pub const Py_nb_or = pytypes.Py_nb_or;
+pub const Py_nb_xor = pytypes.Py_nb_xor;
+pub const Py_nb_lshift = pytypes.Py_nb_lshift;
+pub const Py_nb_rshift = pytypes.Py_nb_rshift;
+pub const Py_nb_inplace_true_divide = pytypes.Py_nb_inplace_true_divide;
+pub const Py_nb_inplace_floor_divide = pytypes.Py_nb_inplace_floor_divide;
+pub const Py_nb_inplace_remainder = pytypes.Py_nb_inplace_remainder;
+pub const Py_nb_inplace_power = pytypes.Py_nb_inplace_power;
+pub const Py_nb_inplace_matrix_multiply = pytypes.Py_nb_inplace_matrix_multiply;
+pub const Py_nb_inplace_and = pytypes.Py_nb_inplace_and;
+pub const Py_nb_inplace_or = pytypes.Py_nb_inplace_or;
+pub const Py_nb_inplace_xor = pytypes.Py_nb_inplace_xor;
+pub const Py_nb_inplace_lshift = pytypes.Py_nb_inplace_lshift;
+pub const Py_nb_inplace_rshift = pytypes.Py_nb_inplace_rshift;
 pub const Py_tp_getattro = pytypes.Py_tp_getattro;
 pub const Py_tp_setattro = pytypes.Py_tp_setattro;
 pub const Py_TPFLAGS_DEFAULT = pytypes.Py_TPFLAGS_DEFAULT;

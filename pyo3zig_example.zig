@@ -151,6 +151,16 @@ const Greeter = extern struct {
     pub fn __call__(self: *Greeter, n: i64) i64 {
         return self.val + n;
     }
+
+    // __format__ powers format(g, spec) and f"{g:spec}".
+    pub fn __format__(self: *Greeter, spec: []const u8) !pz.PyString {
+        var buf: [64]u8 = undefined;
+        const s = if (spec.len == 0)
+            try std.fmt.bufPrint(&buf, "Greeter({d})", .{self.val})
+        else
+            try std.fmt.bufPrint(&buf, "[{s}={d}]", .{ spec, self.val });
+        return pz.PyString.init(s);
+    }
 };
 
 // Class with keyword __init__ (with a default) and a keyword method.
@@ -270,6 +280,11 @@ const Range = extern struct {
         self.cur += 1;
         return v;
     }
+    // Custom reversed(): proves the explicit hook wins over the sequence
+    // protocol fallback (returns just the endpoints, stop-first).
+    pub fn __reversed__(self: *Range) [2]i64 {
+        return .{ self.stop, self.start };
+    }
 };
 
 const RangeClass = pz.PyClass(Range, .{ .init_args = &.{ "start", "stop" } });
@@ -345,6 +360,27 @@ const Money = extern struct {
     // Pickle hook: returns a tuple describing how to reconstruct the value.
     pub fn __reduce__(self: *Money) struct { i64 } {
         return .{self.cents};
+    }
+    // truediv returns a float ratio (a non-Self result, converted normally).
+    pub fn __truediv__(self: *Money, k: i64) f64 {
+        return @as(f64, @floatFromInt(self.cents)) / @as(f64, @floatFromInt(k));
+    }
+    // abs(m), +m.
+    pub fn __abs__(self: *Money) Money {
+        return .{ .cents = if (self.cents < 0) -self.cents else self.cents };
+    }
+    pub fn __pos__(self: *Money) Money {
+        return .{ .cents = self.cents };
+    }
+    // More in-place operators (mutate self).
+    pub fn __imod__(self: *Money, k: i64) void {
+        self.cents = @mod(self.cents, k);
+    }
+    pub fn __ipow__(self: *Money, k: i64) void {
+        var r: i64 = 1;
+        var n = k;
+        while (n > 0) : (n -= 1) r *= self.cents;
+        self.cents = r;
     }
     // Numeric conversions: int(m), float(m).
     pub fn __int__(self: *Money) i64 {
@@ -466,6 +502,89 @@ fn get_node_deinit_count() i64 {
     return node_deinit_count;
 }
 
+// Bitwise / shift operators, unary abs/pos/invert, and the matching in-place
+// forms. Operands are plain ints (mixed-type ops).
+const Bits = extern struct {
+    v: i64,
+    pub fn init(v: i64) Bits {
+        return .{ .v = v };
+    }
+    pub fn __and__(self: *Bits, k: i64) Bits {
+        return .{ .v = self.v & k };
+    }
+    pub fn __or__(self: *Bits, k: i64) Bits {
+        return .{ .v = self.v | k };
+    }
+    pub fn __xor__(self: *Bits, k: i64) Bits {
+        return .{ .v = self.v ^ k };
+    }
+    pub fn __lshift__(self: *Bits, k: i64) Bits {
+        return .{ .v = self.v << @as(u6, @intCast(k)) };
+    }
+    pub fn __rshift__(self: *Bits, k: i64) Bits {
+        return .{ .v = self.v >> @as(u6, @intCast(k)) };
+    }
+    pub fn __invert__(self: *Bits) Bits {
+        return .{ .v = ~self.v };
+    }
+    pub fn __abs__(self: *Bits) Bits {
+        return .{ .v = if (self.v < 0) -self.v else self.v };
+    }
+    pub fn __pos__(self: *Bits) Bits {
+        return .{ .v = self.v };
+    }
+    pub fn __iand__(self: *Bits, k: i64) void {
+        self.v &= k;
+    }
+    pub fn __ior__(self: *Bits, k: i64) void {
+        self.v |= k;
+    }
+    pub fn __ixor__(self: *Bits, k: i64) void {
+        self.v ^= k;
+    }
+    pub fn __ilshift__(self: *Bits, k: i64) void {
+        self.v <<= @as(u6, @intCast(k));
+    }
+    pub fn __irshift__(self: *Bits, k: i64) void {
+        self.v >>= @as(u6, @intCast(k));
+    }
+    pub fn __int__(self: *Bits) i64 {
+        return self.v;
+    }
+};
+const BitsClass = pz.PyClass(Bits, .{ .init_args = &.{"v"} });
+
+// __delitem__ powers `del obj[key]` (shares the assignment slot).
+const Bag = extern struct {
+    deleted: i64,
+    pub fn init() Bag {
+        return .{ .deleted = 0 };
+    }
+    pub fn __delitem__(self: *Bag, key: i64) void {
+        self.deleted += key;
+    }
+};
+const BagClass = pz.PyClass(Bag, .{});
+
+// Defining __eq__ without __hash__ makes instances unhashable (Python rule).
+const Unhashable = extern struct {
+    v: i64,
+    pub fn init(v: i64) Unhashable {
+        return .{ .v = v };
+    }
+    pub fn __eq__(self: *Unhashable, o: *Unhashable) bool {
+        return self.v == o.v;
+    }
+};
+const UnhashableClass = pz.PyClass(Unhashable, .{ .init_args = &.{"v"} });
+
+// bytearray (and bytes/str) decode to a borrowed []const u8.
+fn sum_bytes(data: []const u8) i64 {
+    var total: i64 = 0;
+    for (data) |b| total += b;
+    return total;
+}
+
 // Comptime-generated .pyi stub for the module's functions.
 const STUB = pz.moduleStub(.{
     .{ .name = "hello", .func = hello },
@@ -479,6 +598,7 @@ const STUB = pz.moduleStub(.{
     .{ .name = "point_sum", .func = point_sum, .args = &.{"p"} },
     .{ .name = "vec_dot", .func = vec_dot, .args = &.{ "a", "b" } },
     .{ .name = "power", .func = power, .args = &.{ "base", "exp" } },
+    .{ .name = "sum_bytes", .func = sum_bytes, .args = &.{"data"} },
 });
 
 // Class stubs so type checkers see the classes too.
@@ -541,8 +661,9 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("get_deinit_count", get_deinit_count),
         pz.pyFnNamed("get_node_deinit_count", get_node_deinit_count),
         pz.pyFnNamed("big_mul", big_mul),
+        pz.pyFnNamed("sum_bytes", sum_bytes),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass },
 });
 
 comptime {

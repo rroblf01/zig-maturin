@@ -295,6 +295,12 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                         }
                         return buf[0..@as(usize, @intCast(size))];
                     }
+                    // bytearray: borrow its mutable buffer (valid for the call).
+                    if (zm.PyByteArray_Check(obj) != 0) {
+                        const buf = zm.PyByteArray_AsString(obj) orelse return error.PythonValueError;
+                        const size = zm.PyByteArray_Size(obj);
+                        return buf[0..@as(usize, @intCast(size))];
+                    }
                     raiseTypeError(T, obj);
                     return error.PythonTypeError;
                 }

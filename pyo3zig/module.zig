@@ -49,6 +49,14 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
             const classes: []const type = if (@hasField(@TypeOf(config), "classes")) config.classes else &.{};
             inline for (classes) |cls| {
                 const type_obj = cls.py_type_obj();
+                // Types built from a bare (undotted) PyType_Spec name have no
+                // __module__, which breaks repr, pickling, and CPython 3.13's
+                // dict-key error message (it reads type.__module__). Set it to
+                // the owning module's name before handing the type over.
+                if (zm.PyUnicode_FromString(@as([*:0]const u8, @ptrCast(name.ptr)))) |mod_name_obj| {
+                    _ = zm.PyObject_SetAttrString(type_obj, "__module__", mod_name_obj);
+                    zm.Py_XDECREF(mod_name_obj);
+                }
                 if (zm.PyModule_AddObject(m, cls.class_name(), type_obj) != 0) {
                     zm.Py_XDECREF(type_obj);
                     zm.Py_XDECREF(m);

@@ -95,7 +95,7 @@ Zig error surface as a Python exception.
 | `i8`..`i64`, `u8`..`u64` | `int` | `int` |
 | `f32`, `f64` | `float` | `float` |
 | `bool` | `bool` | `bool` |
-| `[]const u8` | `str` / `bytes` (borrowed) | `str` |
+| `[]const u8` | `str` / `bytes` / `bytearray` (borrowed) | `str` |
 | `?T` | `T` or `None` | `T` or `None` |
 | `[]T`, `[N]T` | `list` / `tuple` | `list` |
 | tuple struct | `list` / `tuple` | `tuple` |
@@ -158,20 +158,26 @@ Register the class in the module's `.classes` field.
 **Hooks** (declared on the struct):
 
 - Lifecycle / repr: `init`, `__deinit__` (called on GC), `__str__`, `__repr__`,
-  `__hash__`, `__call__` (callable instances), `__enter__`/`__exit__` (context
-  manager, `with obj:`), `__reduce__` (pickle).
+  `__hash__`, `__format__` (`format()` / f-string specs), `__call__` (callable
+  instances), `__enter__`/`__exit__` (context manager, `with obj:`), `__reduce__`
+  (pickle).
 - Comparisons: `__eq__` (and `__ne__` derived from it), plus `__lt__`, `__le__`,
   `__gt__`, `__ge__` — define any subset (just `__lt__` enables `sorted()`).
+  Defining `__eq__` without `__hash__` makes instances unhashable, as in Python.
 - Container / iterator protocols: `__len__`, `__getitem__`, `__setitem__`,
-  `__contains__`, `__iter__`, `__next__` (a type with `__next__` is its own
-  iterator; `__getitem__` normalizes negative indices when `__len__` is present).
+  `__delitem__`, `__contains__`, `__iter__`, `__next__`, `__reversed__` (a type
+  with `__next__` is its own iterator; `__getitem__` normalizes negative indices
+  when `__len__` is present).
 - Operators: `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`,
-  `__mod__`, `__pow__`, `__matmul__`, `__neg__`, `__bool__`, in-place
-  `__iadd__`/`__isub__`/`__imul__`, and conversions `__int__`/`__float__`/
-  `__index__`. A binary op's second parameter can be the same type (`*Self`) or a
-  scalar (e.g. `i64` for `vec * 2`); define `__radd__`/`__rsub__`/`__rmul__` for
-  the reflected form (`2 * vec`). Operands that don't match yield
-  `NotImplemented`. A result of type `Self` is wrapped into a new instance.
+  `__mod__`, `__pow__`, `__matmul__`, bitwise `__and__`/`__or__`/`__xor__`/
+  `__lshift__`/`__rshift__`, unary `__neg__`/`__pos__`/`__abs__`/`__invert__`/
+  `__bool__`, the matching in-place forms (`__iadd__`, `__imul__`, `__iand__`,
+  `__ilshift__`, … — every operator has one), and conversions
+  `__int__`/`__float__`/`__index__`. A binary op's second parameter can be the
+  same type (`*Self`) or a scalar (e.g. `i64` for `vec * 2`); define
+  `__radd__`/`__rsub__`/`__rmul__` for the reflected form (`2 * vec`). Operands
+  that don't match yield `NotImplemented`. A result of type `Self` is wrapped
+  into a new instance.
 - Attributes: `__getattr__(self, name)` (consulted only when normal lookup
   fails) and `__setattr__(self, name, value)` (intercepts every assignment).
 - Buffer: `__buffer__(self)` returns a `[]const u8` exposed zero-copy to

@@ -151,7 +151,11 @@ pub fn classStub(comptime spec: anytype) []const u8 {
         .{ "__call__", &[_][]const u8{} },
         .{ "__int__", &[_][]const u8{} },
         .{ "__float__", &[_][]const u8{} },
+        .{ "__index__", &[_][]const u8{} },
         .{ "__bool__", &[_][]const u8{} },
+        .{ "__format__", &[_][]const u8{"format_spec"} },
+        .{ "__reversed__", &[_][]const u8{} },
+        .{ "__delitem__", &[_][]const u8{"key"} },
     };
     inline for (dunders) |d| {
         if (@hasDecl(T, d[0])) {

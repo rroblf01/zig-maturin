@@ -78,6 +78,24 @@ pub extern fn PyBytes_AsString(?*PyObject) callconv(.c) [*]u8;
 pub extern fn PyBytes_Size(?*PyObject) callconv(.c) isize;
 pub extern fn PyBytes_AsStringAndSize(?*PyObject, *[*]u8, *isize) callconv(.c) c_int;
 
+// bytearray (mutable bytes). The buffer is borrowed for the call's duration.
+pub extern fn PyByteArray_AsString(?*PyObject) callconv(.c) ?[*]u8;
+pub extern fn PyByteArray_Size(?*PyObject) callconv(.c) isize;
+pub extern fn pyo3zig_PyByteArray_Type() callconv(.c) ?*PyObject;
+pub fn PyByteArray_Type() callconv(.c) ?*PyObject {
+    return pyo3zig_PyByteArray_Type();
+}
+pub fn PyByteArray_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyByteArray_Type());
+}
+
+// Address of CPython's PyObject_HashNotImplemented, for the tp_hash slot of a
+// type that should be unhashable (defines __eq__ without __hash__).
+pub extern fn pyo3zig_HashNotImplemented() callconv(.c) ?*anyopaque;
+pub fn HashNotImplemented() ?*anyopaque {
+    return pyo3zig_HashNotImplemented();
+}
+
 // Integer functions
 pub extern fn PyLong_FromLong(c_long) callconv(.c) ?*PyObject;
 pub extern fn PyLong_FromLongLong(i64) callconv(.c) ?*PyObject;
