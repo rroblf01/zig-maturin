@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import tempfile
 import zipfile
-from pathlib import Path
 
 from zig_maturin.wheel import build_wheel, generate_metadata, generate_wheel_metadata
 

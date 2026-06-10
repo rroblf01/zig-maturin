@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Pinned to the Zig version the project is tested against.
+env:
+  ZIG_VERSION: "0.16.0"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff
+        run: ruff check src/ tests/ ci/
+
+  # Zig-side unit tests (the 45 C-API/runtime assertions). The build.zig `test`
+  # step shells out via `sh`/`cp`, so it runs on the Unix runners only; Windows
+  # functional coverage comes from the extension-e2e job below.
+  zig-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Run Zig tests
+        run: zig build test
+
+  # Pure-Python tooling tests (CLI, config, wheel, builder) across every
+  # supported OS and Python version. No Zig needed.
+  tooling-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.12", "3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package + dev deps
+        run: pip install ".[dev]"
+      - name: Run tooling tests
+        run: pytest tests/test_cli.py tests/test_config.py tests/test_wheel.py tests/test_builder.py -v
+
+  # The real cross-platform proof: build the demo extension with the tool,
+  # install the wheel, and import + exercise it natively on each OS/version.
+  extension-e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.12", "3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Install zig-maturin
+        run: pip install .
+      - name: Build extension wheel
+        run: zig-maturin build --out dist
+      - name: Install built wheel
+        run: pip install --find-links dist --no-index pyo3zig_demo
+      - name: Smoke test imported extension
+        run: python ci/smoke.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: dist/*.whl

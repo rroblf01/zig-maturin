@@ -56,8 +56,10 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run Python tests");
     const is_macos = target.result.os.tag == .macos;
-    const so_ext: []const u8 = if (is_macos) "dylib" else "so";
-    const copy_cmd = std.fmt.allocPrint(b.allocator, "cp zig-out/lib/libpyo3zig_demo.{s} pyo3zig_demo.{s} && python3 tests/test_pyo3zig.py", .{ so_ext, so_ext }) catch "cp_failed";
+    // Source artifact is .dylib on macOS, .so elsewhere; the import target is
+    // always pyo3zig_demo.so (Python loads .so on macOS too).
+    const src_ext: []const u8 = if (is_macos) "dylib" else "so";
+    const copy_cmd = std.fmt.allocPrint(b.allocator, "cp zig-out/lib/libpyo3zig_demo.{s} pyo3zig_demo.so && python3 tests/test_pyo3zig.py", .{src_ext}) catch "cp_failed";
     const run_tests = b.addSystemCommand(&.{ "sh", "-c", copy_cmd });
     run_tests.step.dependOn(b.getInstallStep());
     test_step.dependOn(&run_tests.step);
