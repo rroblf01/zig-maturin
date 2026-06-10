@@ -111,7 +111,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
 
     const NewWrapper = struct {
         fn new(ty: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
-            _ = kwargs;
+            if (kwargs != null) {
+                if (zm.PyDict_Size(kwargs) > 0) {
+                    zm.PyErr_SetString(zm.PyExc_TypeError(), "keyword arguments not supported for init");
+                    return null;
+                }
+            }
             const alloc = zm.PyMem_RawMalloc(Cell.allocSize());
             if (alloc == null) {
                 zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
