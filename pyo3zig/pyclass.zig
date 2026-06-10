@@ -118,6 +118,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const Cell = pycell.PyCell(T);
     const type_name = buildTypeName(T);
     const has_methods = @hasField(@TypeOf(config), "methods");
+    const has_readonly = @hasField(@TypeOf(config), "readonly");
     const has_str = @hasDecl(T, "__str__");
     const has_repr = @hasDecl(T, "__repr__");
     const has_hash = @hasDecl(T, "__hash__");
@@ -276,10 +277,16 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 };
 
                 const field_name = @as([*:0]const u8, @ptrCast(field.name.ptr));
+                const is_readonly = comptime (has_readonly and blk: {
+                    for (config.readonly) |ro| {
+                        if (std.mem.eql(u8, ro, field.name)) break :blk true;
+                    }
+                    break :blk false;
+                });
                 getset_defs[i] = .{
                     .name = field_name,
                     .get = &FieldWrapper.getter,
-                    .set = &FieldWrapper.setter,
+                    .set = if (is_readonly) null else &FieldWrapper.setter,
                     .doc = null,
                     .closure = null,
                 };
