@@ -43,7 +43,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(pyo3zig_lib);
 
     const test_step = b.step("test", "Run Python tests");
-    const run_tests = b.addSystemCommand(&.{ "sh", "-c", "cp zig-out/lib/libpyo3zig_demo.so pyo3zig_demo.so && python3 tests/run_tests.py" });
+    const run_tests = b.addSystemCommand(&.{ "sh", "-c", "cp zig-out/lib/libpyo3zig_demo.so pyo3zig_demo.so && python3 tests/test_pyo3zig.py" });
     run_tests.step.dependOn(b.getInstallStep());
     test_step.dependOn(&run_tests.step);
 }

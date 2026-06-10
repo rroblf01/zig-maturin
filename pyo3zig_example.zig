@@ -49,6 +49,20 @@ const GreeterClass = pz.PyClass(Greeter, .{
     },
 });
 
+var deinit_counter: i64 = 0;
+
+const DeinitTracker = extern struct {
+    pub fn __deinit__(_: *DeinitTracker) void {
+        deinit_counter += 1;
+    }
+};
+
+const DeinitTrackerClass = pz.PyClass(DeinitTracker, .{});
+
+fn get_deinit_count() i64 {
+    return deinit_counter;
+}
+
 const Mod = pz.pyModule("pyo3zig_demo", .{
     .functions = &[_]pz.PyMethodDef{
         pz.pyFnNamed("hello", hello),
@@ -56,8 +70,9 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("double", double),
         pz.pyFnNamed("greet", greet),
         pz.pyFnNamed("repeat_bytes", repeat_bytes),
+        pz.pyFnNamed("get_deinit_count", get_deinit_count),
     },
-    .classes = &[_]type{GreeterClass},
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass },
 });
 
 comptime {

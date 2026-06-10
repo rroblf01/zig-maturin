@@ -173,10 +173,21 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
 
     const TypeBuilder = struct {
         fn getTypeObject() ?*zm.PyObject {
-            var getset_defs: [countFields(T) + 1]zm.PyGetSetDef = undefined;
-            var getset_idx: usize = 0;
+            const fields = comptime std.meta.fields(T);
+            const field_count = fields.len;
+            const defs_count = field_count + 1;
 
-            inline for (comptime std.meta.fields(T)) |field| {
+            const getset_ptr = zm.PyMem_RawMalloc(@sizeOf(zm.PyGetSetDef) * defs_count);
+            if (getset_ptr == null) {
+                zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
+                return null;
+            }
+            const getset_defs = @as([*]zm.PyGetSetDef, @ptrCast(@alignCast(getset_ptr.?)));
+            @memset(getset_defs[0..defs_count], .{
+                .name = null, .get = null, .set = null, .doc = null, .closure = null,
+            });
+
+            inline for (fields, 0..) |field, i| {
                 const FieldWrapper = struct {
                     fn getter(obj: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) ?*zm.PyObject {
                         const ptr = Cell.ptrFromObj(obj);
@@ -198,16 +209,14 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 };
 
                 const field_name = @as([*:0]const u8, @ptrCast(field.name.ptr));
-                getset_defs[getset_idx] = .{
+                getset_defs[i] = .{
                     .name = field_name,
                     .get = &FieldWrapper.getter,
                     .set = &FieldWrapper.setter,
                     .doc = null,
                     .closure = null,
                 };
-                getset_idx += 1;
             }
-            getset_defs[getset_idx] = .{ .name = null, .get = null, .set = null, .doc = null, .closure = null };
 
             if (has_methods) {
                 const methods = config.methods;
@@ -224,7 +233,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 var slots = [_]zm.PyType_Slot{
                     .{ .slot = zm.Py_tp_dealloc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DeallocWrapper.dealloc))) },
                     .{ .slot = zm.Py_tp_new, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NewWrapper.new))) },
-                    .{ .slot = zm.Py_tp_getset, .pfunc = @as(?*anyopaque, @ptrCast(&getset_defs)) },
+                    .{ .slot = zm.Py_tp_getset, .pfunc = @as(?*anyopaque, @ptrCast(getset_defs)) },
                     .{ .slot = zm.Py_tp_methods, .pfunc = @as(?*anyopaque, @ptrCast(method_defs.ptr)) },
                     .{ .slot = 0, .pfunc = null },
                 };
@@ -242,7 +251,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 var slots = [_]zm.PyType_Slot{
                     .{ .slot = zm.Py_tp_dealloc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DeallocWrapper.dealloc))) },
                     .{ .slot = zm.Py_tp_new, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NewWrapper.new))) },
-                    .{ .slot = zm.Py_tp_getset, .pfunc = @as(?*anyopaque, @ptrCast(&getset_defs)) },
+                    .{ .slot = zm.Py_tp_getset, .pfunc = @as(?*anyopaque, @ptrCast(getset_defs)) },
                     .{ .slot = 0, .pfunc = null },
                 };
 

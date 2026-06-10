@@ -104,6 +104,22 @@ check("Greeter greet after set", g.greet() == "Hello, val=99!")
 g2 = m.Greeter(100)
 check("Greeter second instance", g2.greet() == "Hello, val=100!")
 
+# test_kwargs_rejected
+try:
+    m.Greeter(42, extra=1)
+    check("Greeter kwargs rejected", False)
+except TypeError:
+    check("Greeter kwargs rejected", True)
+
+# test_deinit_tracker
+check("DeinitTracker class exists", hasattr(m, "DeinitTracker"))
+check("get_deinit_count exists", hasattr(m, "get_deinit_count"))
+count_before = m.get_deinit_count()
+d = m.DeinitTracker()
+check("deinit count after create", m.get_deinit_count() == count_before)
+del d
+check("deinit count after delete", m.get_deinit_count() == count_before + 1)
+
 total = passed + failed
 print(f"\nResults: {passed}/{total} passed" + (f", {failed} failed!" if failed else ", all passed!"))
 sys.exit(0 if failed == 0 else 1)
