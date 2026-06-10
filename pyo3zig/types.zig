@@ -35,7 +35,7 @@ pub const PyString = struct {
     pub fn init(s: []const u8) !PyString {
         const ptr = zm.PyUnicode_FromStringAndSize(s.ptr, @as(isize, @intCast(s.len)));
         if (ptr == null) return error.PythonError;
-        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
     }
 
     pub fn asSlice(self: *const PyString) ![]const u8 {
@@ -59,7 +59,7 @@ pub const PyBytes = struct {
     pub fn init(s: []const u8) !PyBytes {
         const ptr = zm.PyBytes_FromStringAndSize(s.ptr, @as(isize, @intCast(s.len)));
         if (ptr == null) return error.PythonError;
-        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
     }
 
     pub fn asSlice(self: *const PyBytes) ![]const u8 {
@@ -89,7 +89,7 @@ pub const PyInt = struct {
     pub fn fromLong(val: i64) !PyInt {
         const ptr = zm.PyLong_FromLongLong(val);
         if (ptr == null) return error.PythonError;
-        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
     }
 
     pub fn asSigned(self: *const PyInt) !i64 {
@@ -111,7 +111,7 @@ pub const PyFloat = struct {
     pub fn fromDouble(val: f64) !PyFloat {
         const ptr = zm.PyFloat_FromDouble(val);
         if (ptr == null) return error.PythonError;
-        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
     }
 
     pub fn asDouble(self: *const PyFloat) f64 {
@@ -132,7 +132,7 @@ pub const PyBool = struct {
 
     pub fn fromBool(val: bool) PyBool {
         const ptr = zm.PyBool_FromLong(if (val) 1 else 0);
-        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
     }
 
     pub fn asBool(self: *const PyBool) bool {
@@ -154,13 +154,13 @@ pub const PyList = struct {
     pub fn new() !PyList {
         const ptr = zm.PyList_New(0);
         if (ptr == null) return error.PythonError;
-        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
     }
 
     pub fn withSize(size: isize) !PyList {
         const ptr = zm.PyList_New(size);
         if (ptr == null) return error.PythonError;
-        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
     }
 
     pub fn len(self: *const PyList) isize {
@@ -192,7 +192,7 @@ pub const PyDict = struct {
     pub fn new() !PyDict {
         const ptr = zm.PyDict_New();
         if (ptr == null) return error.PythonError;
-        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
     }
 
     pub fn setString(self: *const PyDict, key: [*:0]const u8, value: ?*zm.PyObject) !void {
@@ -224,7 +224,7 @@ pub const PyTuple = struct {
     pub fn new(size: isize) !PyTuple {
         const ptr = zm.PyTuple_New(size);
         if (ptr == null) return error.PythonError;
-        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
     }
 
     pub fn len(self: *const PyTuple) isize {

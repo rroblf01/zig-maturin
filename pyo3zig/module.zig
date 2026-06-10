@@ -5,7 +5,7 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
     return struct {
         pub fn init() callconv(.c) ?*zm.PyObject {
             const allocator = std.heap.c_allocator;
-            const funcs: []const zm.PyMethodDef = config.functions;
+            const funcs: []const zm.PyMethodDef = if (@hasField(@TypeOf(config), "functions")) config.functions else &.{};
 
             const method_count = funcs.len + 1;
             const methods = allocator.alloc(zm.PyMethodDef, method_count) catch {
@@ -41,7 +41,7 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
                 return null;
             }
 
-            const classes: []const type = config.classes;
+            const classes: []const type = if (@hasField(@TypeOf(config), "classes")) config.classes else &.{};
             inline for (classes) |cls| {
                 const type_obj = cls.py_type_obj();
                 if (zm.PyModule_AddObject(m, cls.class_name(), type_obj) != 0) {

@@ -53,7 +53,10 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
         },
         else => {
             if (@hasDecl(T, "borrow")) {
-                return zm.Py_NewRef(value.borrow());
+                // Wrapper types own exactly one reference (created via noRef).
+                // Returning transfers that ownership to the caller — no extra
+                // incref, and the temporary is not deinit'd.
+                return value.borrow();
             }
             @compileError("Cannot convert " ++ @typeName(T) ++ " to Python object");
         },
@@ -114,13 +117,13 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
         },
         .pointer => |info| {
             if (info.size == .slice and info.child == u8) {
+                // Borrow the underlying buffer — valid for the duration of the
+                // call (the argument tuple keeps the object alive). No copy, no
+                // free. Do NOT retain the slice past the call.
                 if (zm.PyUnicode_Check(obj) != 0) {
                     const c_str_opt = zm.PyUnicode_AsUTF8(obj);
                     if (c_str_opt) |c_str| {
-                        const len = std.mem.len(c_str);
-                        const copy = std.heap.c_allocator.alloc(u8, len) catch return error.MemoryError;
-                        @memcpy(copy, c_str[0..len]);
-                        return copy;
+                        return std.mem.sliceTo(c_str, 0);
                     }
                     return error.PythonValueError;
                 }
@@ -130,10 +133,7 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
                     if (zm.PyBytes_AsStringAndSize(obj, &buf, &size) != 0) {
                         return error.PythonValueError;
                     }
-                    const len = @as(usize, @intCast(size));
-                    const copy = std.heap.c_allocator.alloc(u8, len) catch return error.MemoryError;
-                    @memcpy(copy, buf[0..len]);
-                    return copy;
+                    return buf[0..@as(usize, @intCast(size))];
                 }
                 return error.PythonTypeError;
             }

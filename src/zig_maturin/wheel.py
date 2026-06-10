@@ -33,7 +33,10 @@ def build_wheel(
     records: list[str] = []
 
     with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(f"{dist_info}/WHEEL", generate_wheel_metadata())
+        zf.writestr(
+            f"{dist_info}/WHEEL",
+            generate_wheel_metadata(python_tag, abi_tag, platform_tag),
+        )
         records.append((f"{dist_info}/WHEEL", True))
 
         metadata = generate_metadata(module_name, version, description, authors)
@@ -45,11 +48,13 @@ def build_wheel(
             zf.writestr(f"{dist_info}/entry_points.txt", entry_points)
             records.append((f"{dist_info}/entry_points.txt", True))
 
+        # Extension module placed at the archive root so `import {module_name}`
+        # loads the .so directly (not as a nested submodule).
         so_data = so_path.read_bytes()
-        zf.writestr(f"{module_name}/{so_name}", so_data)
+        zf.writestr(so_name, so_data)
         so_hash = hashlib.sha256(so_data).hexdigest()
         so_len = len(so_data)
-        records.append((f"{module_name}/{so_name}", False, so_hash, so_len))
+        records.append((so_name, False, so_hash, so_len))
 
         record_lines = []
         for entry in records:
@@ -71,8 +76,8 @@ def build_wheel(
     return wheel_path
 
 
-def generate_wheel_metadata() -> str:
-    return """Wheel-Version: 1.0
+def generate_wheel_metadata(python_tag: str, abi_tag: str, platform_tag: str) -> str:
+    return f"""Wheel-Version: 1.0
 Generator: zig-maturin 0.1.0
 Root-Is-Purelib: false
 Tag: {python_tag}-{abi_tag}-{platform_tag}

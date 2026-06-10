@@ -16,9 +16,11 @@ def test_generate_metadata():
 
 
 def test_generate_wheel_metadata():
-    meta = generate_wheel_metadata()
+    meta = generate_wheel_metadata("cp314", "cp314", "manylinux_2_28_x86_64")
     assert "Wheel-Version: 1.0" in meta
     assert "zig-maturin" in meta
+    assert "Tag: cp314-cp314-manylinux_2_28_x86_64" in meta
+    assert "{python_tag}" not in meta
 
 
 def test_build_wheel(tmp_path):
@@ -45,7 +47,9 @@ def test_build_wheel(tmp_path):
 
     with zipfile.ZipFile(wheel_path, "r") as zf:
         names = zf.namelist()
-        assert "testmod/testmod.so" in names
+        # Extension lives at the archive root so `import testmod` loads it.
+        assert "testmod.so" in names
+        assert "testmod/testmod.so" not in names
         assert "testmod-0.1.0.dist-info/METADATA" in names
         assert "testmod-0.1.0.dist-info/WHEEL" in names
         assert "testmod-0.1.0.dist-info/RECORD" in names

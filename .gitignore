@@ -19,3 +19,5 @@ zig-out/
 *.dylib
 *.dll
 *.pdb
+
+.claude/

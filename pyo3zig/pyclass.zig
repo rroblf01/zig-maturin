@@ -34,15 +34,6 @@ fn callFuncReturningPyObject(comptime func: anytype, comptime fn_info: std.built
     }
 }
 
-pub fn wrapMethod(comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
-    return .{
-        .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
-        .ml_meth = @ptrCast(&func),
-        .ml_flags = zm.METH_VARARGS,
-        .ml_doc = null,
-    };
-}
-
 pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
     const FnType = @TypeOf(func);
     const fn_info = @typeInfo(FnType).@"fn";
@@ -127,11 +118,16 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const DeallocWrapper = struct {
         fn dealloc(obj: ?*zm.PyObject) callconv(.c) void {
             if (obj) |o| {
+                const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(o)));
+                const ty = @as(?*zm.PyObject, @ptrCast(@alignCast(header.ob_type)));
                 if (@hasDecl(T, "__deinit__")) {
                     const ptr = Cell.ptrFromObj(o);
                     ptr.__deinit__();
                 }
                 zm.PyMem_RawFree(@as(?*anyopaque, @ptrCast(o)));
+                // Heap types are reference-counted; release the type ref taken
+                // in NewWrapper.new.
+                zm.Py_XDECREF(ty);
             }
         }
     };
@@ -153,6 +149,8 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(alloc)));
             header.ob_refcnt = 1;
             header.ob_type = @as(?*anyopaque, @ptrCast(ty));
+            // Instances of a heap type hold a reference to the type object.
+            zm.Py_XINCREF(ty);
 
             if (@hasDecl(T, "init")) {
                 const ptr = Cell.ptrFromObj(obj);
@@ -187,7 +185,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     if (InitReturn == void) {
                         @call(.auto, init_fn, init_args);
                     } else if (@typeInfo(InitReturn) == .error_union) {
-                        ptr.* = try @call(.auto, init_fn, init_args);
+                        ptr.* = @call(.auto, init_fn, init_args) catch |err| {
+                            errors.setPyException(err);
+                            zm.PyMem_RawFree(alloc);
+                            return null;
+                        };
                     } else {
                         ptr.* = @call(.auto, init_fn, init_args);
                     }
@@ -219,21 +221,29 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const HashWrapper = struct {
         fn hash(self_obj: ?*zm.PyObject) callconv(.c) isize {
             const ptr = Cell.ptrFromObj(self_obj);
-            const result = T.__hash__(ptr);
-            return @as(isize, @intCast(result));
+            const result = @as(isize, @intCast(T.__hash__(ptr)));
+            // -1 is CPython's error sentinel; remap to a valid hash.
+            return if (result == -1) -2 else result;
         }
     };
 
     const RichcompareWrapper = struct {
+        // CPython richcompare op codes.
+        const Py_EQ: c_int = 2;
+        const Py_NE: c_int = 3;
+
         fn richcompare(self_obj: ?*zm.PyObject, other_obj: ?*zm.PyObject, op: c_int) callconv(.c) ?*zm.PyObject {
-            _ = op;
+            // Only equality is derivable from __eq__; other orderings are
+            // unsupported unless the user provides them.
+            if (op != Py_EQ and op != Py_NE) return zm.Py_NewRef(zm.Py_NotImplemented());
             if (other_obj == null) return zm.Py_NewRef(zm.Py_NotImplemented());
             const hdr_self = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(self_obj)));
             const hdr_other = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(other_obj)));
             if (hdr_self.ob_type != hdr_other.ob_type) return zm.Py_NewRef(zm.Py_NotImplemented());
             const self_ptr = Cell.ptrFromObj(self_obj);
             const other_ptr = Cell.ptrFromObj(other_obj);
-            const result = T.__eq__(self_ptr, other_ptr);
+            const eq = T.__eq__(self_ptr, other_ptr);
+            const result = if (op == Py_EQ) eq else !eq;
             if (result) return zm.Py_NewRef(zm.Py_True());
             return zm.Py_NewRef(zm.Py_False());
         }
@@ -366,8 +376,4 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             return type_name;
         }
     };
-}
-
-fn countFields(comptime T: type) usize {
-    return std.meta.fields(T).len;
 }

@@ -52,7 +52,8 @@ def test_scaffold_creates_project():
         assert "test_project" in pyproject
 
         main_zig = (project_dir / "src" / "main.zig").read_text()
-        assert "PyInit_test_project" in main_zig
+        assert 'pz.pyModule("test_project"' in main_zig
+        assert "pz.exportModule" in main_zig
 
 
 def test_scaffold_fails_on_existing():
@@ -78,4 +79,4 @@ def test_scaffold_project_name_with_hyphen():
         project_dir = Path(tmp) / "my-zig-mod"
         assert (project_dir / "src" / "main.zig").exists()
         main_zig = (project_dir / "src" / "main.zig").read_text()
-        assert "PyInit_my_zig_mod" in main_zig
+        assert 'pz.pyModule("my_zig_mod"' in main_zig

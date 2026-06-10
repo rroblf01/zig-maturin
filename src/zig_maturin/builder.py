@@ -154,10 +154,6 @@ def build_project(
         platform_tag = target_to_platform_tag(target)
         so_suffix = target_to_so_suffix(target)
         abi_tag = python_version
-        wheel_name = (
-            f"{mod_name}-{config.version}-{python_version}-"
-            f"{abi_tag}-{platform_tag}.whl"
-        )
 
         wheel_path = build_wheel(
             module_name=mod_name,
@@ -175,12 +171,14 @@ def build_project(
         print(f"Created wheel: {wheel_path}")
 
         if develop:
-            install_wheel_develop(wheel_path, mod_name, built_so)
+            install_wheel_develop(wheel_path, mod_name, built_so, so_suffix)
 
     return wheels
 
 
-def install_wheel_develop(wheel_path: Path, mod_name: str, so_path: Path) -> None:
+def install_wheel_develop(
+    wheel_path: Path, mod_name: str, so_path: Path, so_suffix: str = ".so"
+) -> None:
     site_packages = Path(
         subprocess.check_output(
             [sys.executable, "-c", "import site; print(site.getsitepackages()[0])"],
@@ -188,7 +186,7 @@ def install_wheel_develop(wheel_path: Path, mod_name: str, so_path: Path) -> Non
         ).strip()
     )
 
-    dest = site_packages / f"{mod_name}.so"
+    dest = site_packages / f"{mod_name}{so_suffix}"
     import shutil
 
     shutil.copy2(so_path, dest)

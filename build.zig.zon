@@ -9,6 +9,7 @@
         "root.zig",
         "pytypes.zig",
         "pycall.zig",
+        "pyo3zig_capi.c",
         "example.zig",
         "pyo3zig/root.zig",
         "pyo3zig/errors.zig",
