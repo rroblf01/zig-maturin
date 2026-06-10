@@ -39,7 +39,7 @@ pub const PyModuleDef = extern struct {
 };
 
 pub const PyModuleDef_HEAD_INIT = PyModuleDef_Base{
-    .ob_refcnt = 1,
+    .ob_refcnt = @as(Py_ssize_t, 0x00050000c0000000),
     .ob_type = null,
     .m_init = null,
     .m_index = 0,
