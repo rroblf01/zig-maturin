@@ -54,9 +54,10 @@ jobs:
         run: zig build test
 
   # Run the full extension test suite under Valgrind to catch C-level memory
-  # leaks the refcount-stability assertions can't see. PYTHONMALLOC=malloc makes
-  # Valgrind track CPython's allocations; we fail only on *definite* leaks
-  # (real bugs), with a suppression file for known interpreter noise.
+  # leaks the refcount-stability assertions can't see. A full CPython run leaks
+  # thousands of blocks of its own, so ci/check_leaks.py keeps only the blocks
+  # attributable to the extension, drops the intentional one-time type metadata,
+  # and fails on a *scaling* leak (the suite iterates the hot paths 20k+ times).
   leak-check:
     runs-on: ubuntu-latest
     steps:
@@ -78,10 +79,12 @@ jobs:
           cp zig-out/lib/libpyo3zig_demo.so pyo3zig_demo.so
           valgrind \
             --leak-check=full \
-            --errors-for-leak-kinds=definite \
-            --error-exitcode=99 \
-            --suppressions=ci/valgrind-python.supp \
+            --show-leak-kinds=definite,indirect \
+            --num-callers=20 \
+            --log-file=valgrind.log \
             python3 tests/test_pyo3zig.py
+      - name: Check for extension leaks
+        run: python3 ci/check_leaks.py valgrind.log
 
   # Pure-Python tooling tests (CLI, config, wheel, builder) across every
   # supported OS and Python version. No Zig needed.

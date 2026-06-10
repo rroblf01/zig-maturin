@@ -23,8 +23,11 @@ All notable changes to this project are documented here. The format is based on
   return values, round-tripped through CPython's arbitrary-precision int.
 - **Argument names in type errors** for keyword-bound calls
   (`argument 'base': expected int, got str`).
-- **CI leak-check job**: the full suite runs under Valgrind (`PYTHONMALLOC=malloc`,
-  definite-leak detection) to catch C-level leaks.
+- **CI leak-check job**: the full suite runs under Valgrind; `ci/check_leaks.py`
+  keeps only the lost blocks attributable to the extension (filtering out
+  CPython's own thousands of one-time allocations and our intentional
+  process-lifetime type metadata) and fails on a *scaling* leak. Reproducible
+  locally with `ci/leakcheck.Dockerfile`.
 - **Benchmarks** documented in the README.
 - **Full rich comparisons**: `__lt__`, `__le__`, `__gt__`, `__ge__` (any subset);
   `__ne__` is derived from `__eq__`. Enables `sorted()`, `min()`, `max()`.

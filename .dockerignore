@@ -1,0 +1,8 @@
+.venv
+.git
+zig-out
+.zig-cache
+dist
+dist-arm
+**/*.so
+**/__pycache__
