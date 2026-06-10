@@ -111,6 +111,14 @@ pub extern fn PyType_Ready(?*PyObject) callconv(.c) c_int;
 pub extern fn PyMem_RawMalloc(usize) callconv(.c) ?*anyopaque;
 pub extern fn PyMem_RawFree(?*anyopaque) callconv(.c) void;
 
+// GC-aware allocation (for types with Py_TPFLAGS_HAVE_GC). PyType_GenericAlloc
+// allocates, sets refcount/type (increfs heap types), and GC-tracks the object.
+pub const visitproc = *const fn (?*PyObject, ?*anyopaque) callconv(.c) c_int;
+pub extern fn PyType_GenericAlloc(?*PyObject, isize) callconv(.c) ?*PyObject;
+pub extern fn PyObject_Free(?*anyopaque) callconv(.c) void;
+pub extern fn PyObject_GC_UnTrack(?*anyopaque) callconv(.c) void;
+pub extern fn PyObject_GC_Del(?*anyopaque) callconv(.c) void;
+
 // Exception handling
 pub extern fn PyErr_SetString(?*PyObject, [*:0]const u8) callconv(.c) void;
 pub extern fn PyErr_SetObject(?*PyObject, ?*PyObject) callconv(.c) void;

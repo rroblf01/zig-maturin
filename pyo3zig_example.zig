@@ -132,6 +132,25 @@ const Greeter = extern struct {
     pub fn __eq__(self: *Greeter, other: *Greeter) bool {
         return self.val == other.val;
     }
+
+    // Full ordering: enables sorted(), min(), max(), < <= > >=.
+    pub fn __lt__(self: *Greeter, other: *Greeter) bool {
+        return self.val < other.val;
+    }
+    pub fn __le__(self: *Greeter, other: *Greeter) bool {
+        return self.val <= other.val;
+    }
+    pub fn __gt__(self: *Greeter, other: *Greeter) bool {
+        return self.val > other.val;
+    }
+    pub fn __ge__(self: *Greeter, other: *Greeter) bool {
+        return self.val >= other.val;
+    }
+
+    // Callable instances: greeter(n) -> val + n.
+    pub fn __call__(self: *Greeter, n: i64) i64 {
+        return self.val + n;
+    }
 };
 
 // Class with keyword __init__ (with a default) and a keyword method.
@@ -281,6 +300,63 @@ fn get_deinit_count() i64 {
     return deinit_counter;
 }
 
+// Mixed-type and reflected operators: scalar arithmetic on a money amount.
+const Money = extern struct {
+    cents: i64,
+    pub fn init(cents: i64) Money {
+        return .{ .cents = cents };
+    }
+    pub fn __add__(self: *Money, o: *Money) Money {
+        return .{ .cents = self.cents + o.cents };
+    }
+    pub fn __sub__(self: *Money, o: *Money) Money {
+        return .{ .cents = self.cents - o.cents };
+    }
+    // mixed: money * int
+    pub fn __mul__(self: *Money, k: i64) Money {
+        return .{ .cents = self.cents * k };
+    }
+    // reflected: int * money
+    pub fn __rmul__(self: *Money, k: i64) Money {
+        return .{ .cents = self.cents * k };
+    }
+    pub fn __floordiv__(self: *Money, k: i64) Money {
+        return .{ .cents = @divTrunc(self.cents, k) };
+    }
+    pub fn __mod__(self: *Money, k: i64) Money {
+        return .{ .cents = @mod(self.cents, k) };
+    }
+    pub fn __pow__(self: *Money, k: i64) Money {
+        var r: i64 = 1;
+        var n = k;
+        while (n > 0) : (n -= 1) r *= self.cents;
+        return .{ .cents = r };
+    }
+};
+
+const MoneyClass = pz.PyClass(Money, .{ .init_args = &.{"cents"} });
+
+// A class holding a Python object reference -> participates in cyclic GC. The
+// framework owns the `next` reference, visits it in tp_traverse, and clears it
+// in tp_clear, so reference cycles are collectable.
+var node_deinit_count: i64 = 0;
+
+const Node = extern struct {
+    next: ?*pz.PyObject,
+    pub fn init() Node {
+        return .{ .next = null };
+    }
+    pub fn __deinit__(_: *Node) void {
+        node_deinit_count += 1;
+    }
+};
+
+const NodeClass = pz.PyClass(Node, .{});
+
+fn get_node_deinit_count() i64 {
+    return node_deinit_count;
+}
+
 // Comptime-generated .pyi stub for the module's functions.
 const STUB = pz.moduleStub(.{
     .{ .name = "hello", .func = hello },
@@ -327,7 +403,7 @@ fn __pyi__() []const u8 {
 const Mod = pz.pyModule("pyo3zig_demo", .{
     .doc = "Demo module built with pyo3zig.",
     .constants = .{
-        .VERSION = "0.2.0",
+        .VERSION = "0.3.0",
         .MAX_ITEMS = @as(i64, 100),
         .PI = @as(f64, 3.14159),
     },
@@ -354,8 +430,9 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("greet", greet),
         pz.pyFnNamed("repeat_bytes", repeat_bytes),
         pz.pyFnNamed("get_deinit_count", get_deinit_count),
+        pz.pyFnNamed("get_node_deinit_count", get_node_deinit_count),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass },
 });
 
 comptime {

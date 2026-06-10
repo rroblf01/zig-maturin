@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-06-10
+
+### Added
+- **Full rich comparisons**: `__lt__`, `__le__`, `__gt__`, `__ge__` (any subset);
+  `__ne__` is derived from `__eq__`. Enables `sorted()`, `min()`, `max()`.
+- **`__call__`**: callable instances (tp_call).
+- **Mixed-type and reflected operators**: a binary op's second operand may be a
+  scalar (e.g. `money * 2`); `__radd__`/`__rsub__`/`__rmul__` handle the
+  reflected form (`2 * money`). Non-matching operands yield `NotImplemented`.
+- **More operators**: `__truediv__`, `__floordiv__`, `__mod__`, `__pow__`,
+  `__matmul__` (joining `__add__`/`__sub__`/`__mul__`/`__neg__`/`__bool__`).
+- **Cyclic garbage collection**: a class with a `?*pz.PyObject` field gets
+  `Py_TPFLAGS_HAVE_GC` plus `tp_traverse`/`tp_clear`, so reference cycles are
+  collectable. The framework owns one reference per field (incref on set/init,
+  decref on clear/dealloc).
+
+### Changed
+- Instances are now allocated via `PyType_GenericAlloc` (zero-initialized,
+  correctly sized, GC-tracked when applicable) and freed via the matching
+  allocator. Fixes a type-reference leak when `__init__` failed.
+
+### Not yet
+- **Inheritance / subclassing from Python** is deferred: correct support needs
+  custom-dealloc orchestration for a subclass's managed `__dict__` and GC, which
+  is out of scope for this release. `Py_TPFLAGS_BASETYPE` is intentionally not
+  set, so attempts to subclass raise a clear error rather than risk a crash.
+
 ## [0.2.0] - 2026-06-10
 
 ### Added

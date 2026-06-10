@@ -34,6 +34,58 @@ fn callFuncReturningPyObject(comptime func: anytype, comptime fn_info: std.built
     }
 }
 
+/// True if the class stores any Python object reference (`?*PyObject`) field.
+/// Such classes participate in cyclic garbage collection (Py_TPFLAGS_HAVE_GC):
+/// the framework owns one reference per non-null field, visits them in
+/// tp_traverse, and clears them in tp_clear/dealloc.
+fn structHasPyObjectField(comptime T: type) bool {
+    inline for (std.meta.fields(T)) |f| {
+        if (f.type == ?*zm.PyObject) return true;
+    }
+    return false;
+}
+
+/// Allocate a new instance of class `T` belonging to type object `cls`.
+/// PyType_GenericAlloc zero-inits the object, sets the refcount, increfs the
+/// (heap) type, sizes the allocation by `cls`'s own basicsize (so Python
+/// subclasses get enough room), and GC-tracks it when the type has HAVE_GC.
+fn createInstance(comptime T: type, cls: ?*zm.PyObject) ?*zm.PyObject {
+    _ = T;
+    return zm.PyType_GenericAlloc(cls, 0);
+}
+
+/// Free an instance allocated by `createInstance`. GC types are untracked and
+/// freed via the GC allocator; plain types via PyObject_Free.
+fn freeInstanceMem(comptime T: type, obj: ?*zm.PyObject) void {
+    if (comptime structHasPyObjectField(T)) {
+        zm.PyObject_GC_UnTrack(@as(?*anyopaque, @ptrCast(obj)));
+        zm.PyObject_GC_Del(@as(?*anyopaque, @ptrCast(obj)));
+    } else {
+        zm.PyObject_Free(@as(?*anyopaque, @ptrCast(obj)));
+    }
+}
+
+/// Increment the framework-owned reference for each non-null `?*PyObject` field
+/// after the struct has been populated (init / classmethod / operator result).
+fn ownFields(comptime T: type, obj: ?*zm.PyObject) void {
+    const ptr = pycell.PyCell(T).ptrFromObj(obj);
+    inline for (std.meta.fields(T)) |f| {
+        if (f.type == ?*zm.PyObject) zm.Py_XINCREF(@field(ptr, f.name));
+    }
+}
+
+/// Drop the framework-owned references and null the fields (tp_clear / dealloc).
+fn releaseFields(comptime T: type, obj: ?*zm.PyObject) void {
+    const ptr = pycell.PyCell(T).ptrFromObj(obj);
+    inline for (std.meta.fields(T)) |f| {
+        if (f.type == ?*zm.PyObject) {
+            const tmp = @field(ptr, f.name);
+            @field(ptr, f.name) = null;
+            zm.Py_XDECREF(tmp);
+        }
+    }
+}
+
 pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
     const FnType = @TypeOf(func);
     const fn_info = @typeInfo(FnType).@"fn";
@@ -189,17 +241,9 @@ pub fn classMethod(comptime T: type, comptime name: [:0]const u8, comptime func:
 
         // Wrap a returned T into a new Python instance of `cls`.
         fn build(cls: ?*zm.PyObject, result: T) ?*zm.PyObject {
-            const alloc = zm.PyMem_RawMalloc(Cell.allocSize());
-            if (alloc == null) {
-                zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
-                return null;
-            }
-            const obj = @as(?*zm.PyObject, @ptrCast(@alignCast(alloc)));
-            const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(alloc)));
-            header.ob_refcnt = 1;
-            header.ob_type = @as(?*anyopaque, @ptrCast(cls));
-            zm.Py_XINCREF(cls);
+            const obj = createInstance(T, cls) orelse return null;
             Cell.ptrFromObj(obj).* = result;
+            if (comptime structHasPyObjectField(T)) ownFields(T, obj);
             return obj;
         }
 
@@ -255,6 +299,11 @@ pub fn classMethod(comptime T: type, comptime name: [:0]const u8, comptime func:
 pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const Cell = pycell.PyCell(T);
     const type_name = buildTypeName(T);
+    const short_name = comptime blk: {
+        const full = @typeName(T);
+        const dot = std.mem.lastIndexOfScalar(u8, full, '.');
+        break :blk if (dot) |d| full[d + 1 ..] else full;
+    };
     const has_methods = @hasField(@TypeOf(config), "methods");
     const has_readonly = @hasField(@TypeOf(config), "readonly");
     // Optional keyword-argument support for __init__: declare parameter names
@@ -281,22 +330,47 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_add = @hasDecl(T, "__add__");
     const has_sub = @hasDecl(T, "__sub__");
     const has_mul = @hasDecl(T, "__mul__");
+    const has_truediv = @hasDecl(T, "__truediv__");
+    const has_floordiv = @hasDecl(T, "__floordiv__");
+    const has_mod = @hasDecl(T, "__mod__");
+    const has_pow = @hasDecl(T, "__pow__");
+    const has_matmul = @hasDecl(T, "__matmul__");
     const has_neg = @hasDecl(T, "__neg__");
     const has_bool = @hasDecl(T, "__bool__");
+    // Reflected binary operators (called when the left operand is not this type).
+    const has_radd = @hasDecl(T, "__radd__");
+    const has_rsub = @hasDecl(T, "__rsub__");
+    const has_rmul = @hasDecl(T, "__rmul__");
+    // Rich comparisons (a type may define any subset).
+    const has_lt = @hasDecl(T, "__lt__");
+    const has_le = @hasDecl(T, "__le__");
+    const has_gt = @hasDecl(T, "__gt__");
+    const has_ge = @hasDecl(T, "__ge__");
+    const has_richcompare = has_eq or has_lt or has_le or has_gt or has_ge;
+    const has_call = @hasDecl(T, "__call__");
     const has_doc = @hasField(@TypeOf(config), "doc");
+
+    const is_gc = structHasPyObjectField(T);
 
     const DeallocWrapper = struct {
         fn dealloc(obj: ?*zm.PyObject) callconv(.c) void {
             if (obj) |o| {
                 const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(o)));
                 const ty = @as(?*zm.PyObject, @ptrCast(@alignCast(header.ob_type)));
+                // GC objects must be untracked before running teardown.
+                if (is_gc) zm.PyObject_GC_UnTrack(@as(?*anyopaque, @ptrCast(o)));
                 if (@hasDecl(T, "__deinit__")) {
-                    const ptr = Cell.ptrFromObj(o);
-                    ptr.__deinit__();
+                    Cell.ptrFromObj(o).__deinit__();
                 }
-                zm.PyMem_RawFree(@as(?*anyopaque, @ptrCast(o)));
+                // Release the framework-owned references to PyObject fields.
+                if (is_gc) releaseFields(T, o);
+                if (is_gc) {
+                    zm.PyObject_GC_Del(@as(?*anyopaque, @ptrCast(o)));
+                } else {
+                    zm.PyObject_Free(@as(?*anyopaque, @ptrCast(o)));
+                }
                 // Heap types are reference-counted; release the type ref taken
-                // in NewWrapper.new.
+                // when the instance was allocated.
                 zm.Py_XDECREF(ty);
             }
         }
@@ -315,22 +389,21 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             return zm.pz_guard(&thunk, &ctx);
         }
 
+        // Free a partially-constructed instance (init failed). Fields are not
+        // yet framework-owned, so they are not released here.
+        fn freeOnError(obj: ?*zm.PyObject) void {
+            const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(obj)));
+            const ty = @as(?*zm.PyObject, @ptrCast(@alignCast(header.ob_type)));
+            freeInstanceMem(T, obj);
+            zm.Py_XDECREF(ty);
+        }
+
         fn newInner(ty: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject) ?*zm.PyObject {
             if (!has_init_args and kwargs != null and zm.PyDict_Size(kwargs) > 0) {
                 zm.PyErr_SetString(zm.PyExc_TypeError(), "keyword arguments not supported for init");
                 return null;
             }
-            const alloc = zm.PyMem_RawMalloc(Cell.allocSize());
-            if (alloc == null) {
-                zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
-                return null;
-            }
-            const obj = @as(?*zm.PyObject, @ptrCast(@alignCast(alloc)));
-            const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(alloc)));
-            header.ob_refcnt = 1;
-            header.ob_type = @as(?*anyopaque, @ptrCast(ty));
-            // Instances of a heap type hold a reference to the type object.
-            zm.Py_XINCREF(ty);
+            const obj = createInstance(T, ty) orelse return null;
 
             if (@hasDecl(T, "init")) {
                 const ptr = Cell.ptrFromObj(obj);
@@ -345,14 +418,14 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 const init_args = blk: {
                     if (has_init_args) {
                         break :blk funcwrap.bindArgs(params, init_spec, args, kwargs, arg_alloc) orelse {
-                            zm.PyMem_RawFree(alloc);
+                            freeOnError(obj);
                             return null;
                         };
                     } else {
                         const actual: isize = if (args) |a| zm.PyTuple_Size(a) else 0;
                         if (actual != @as(isize, @intCast(params.len))) {
                             zm.PyErr_SetString(zm.PyExc_TypeError(), "wrong number of arguments for init");
-                            zm.PyMem_RawFree(alloc);
+                            freeOnError(obj);
                             return null;
                         }
                         var ia: funcwrap.paramTypesTupleDirect(params) = undefined;
@@ -360,7 +433,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                             const arg_obj = zm.PyTuple_GetItem(args, @as(isize, @intCast(i)));
                             ia[i] = conversion.fromPyObject(param.type.?, arg_obj, arg_alloc) catch {
                                 zm.PyErr_SetString(zm.PyExc_TypeError(), "init argument conversion failed");
-                                zm.PyMem_RawFree(alloc);
+                                freeOnError(obj);
                                 return null;
                             };
                         }
@@ -374,7 +447,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 } else if (@typeInfo(InitReturn) == .error_union) {
                     ptr.* = @call(.auto, init_fn, init_args) catch |err| {
                         errors.setPyExceptionIfNeeded(err);
-                        zm.PyMem_RawFree(alloc);
+                        freeOnError(obj);
                         return null;
                     };
                 } else {
@@ -382,6 +455,8 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 }
             }
 
+            // The instance now owns a reference to each PyObject field.
+            if (is_gc) ownFields(T, obj);
             return obj;
         }
     };
@@ -436,24 +511,38 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
 
     const RichcompareWrapper = struct {
         // CPython richcompare op codes.
+        const Py_LT: c_int = 0;
+        const Py_LE: c_int = 1;
         const Py_EQ: c_int = 2;
         const Py_NE: c_int = 3;
+        const Py_GT: c_int = 4;
+        const Py_GE: c_int = 5;
         const Ctx = struct { self: ?*zm.PyObject, other: ?*zm.PyObject, op: c_int };
 
+        fn boolResult(b: bool) ?*zm.PyObject {
+            return zm.Py_NewRef(if (b) zm.Py_True() else zm.Py_False());
+        }
+
         fn inner(self_obj: ?*zm.PyObject, other_obj: ?*zm.PyObject, op: c_int) ?*zm.PyObject {
-            // Only equality is derivable from __eq__; other orderings are
-            // unsupported unless the user provides them.
-            if (op != Py_EQ and op != Py_NE) return zm.Py_NewRef(zm.Py_NotImplemented());
             if (other_obj == null) return zm.Py_NewRef(zm.Py_NotImplemented());
             const hdr_self = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(self_obj)));
             const hdr_other = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(other_obj)));
+            // Comparisons are defined between two operands of the same type;
+            // anything else yields NotImplemented (Python then decides).
             if (hdr_self.ob_type != hdr_other.ob_type) return zm.Py_NewRef(zm.Py_NotImplemented());
-            const self_ptr = Cell.ptrFromObj(self_obj);
-            const other_ptr = Cell.ptrFromObj(other_obj);
-            const eq = T.__eq__(self_ptr, other_ptr);
-            const result = if (op == Py_EQ) eq else !eq;
-            if (result) return zm.Py_NewRef(zm.Py_True());
-            return zm.Py_NewRef(zm.Py_False());
+            const a = Cell.ptrFromObj(self_obj);
+            const b = Cell.ptrFromObj(other_obj);
+            switch (op) {
+                Py_EQ => if (comptime has_eq) return boolResult(T.__eq__(a, b)),
+                // __ne__ is derived from __eq__ when not given explicitly.
+                Py_NE => if (comptime has_eq) return boolResult(!T.__eq__(a, b)),
+                Py_LT => if (comptime has_lt) return boolResult(T.__lt__(a, b)),
+                Py_LE => if (comptime has_le) return boolResult(T.__le__(a, b)),
+                Py_GT => if (comptime has_gt) return boolResult(T.__gt__(a, b)),
+                Py_GE => if (comptime has_ge) return boolResult(T.__ge__(a, b)),
+                else => {},
+            }
+            return zm.Py_NewRef(zm.Py_NotImplemented());
         }
         fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
             const c = @as(*Ctx, @ptrCast(@alignCast(p)));
@@ -610,46 +699,55 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
-    // Number-protocol operators (__add__/__sub__/__mul__/__neg__). Binary ops
-    // accept two operands of this exact type; mixed-type operands yield
-    // NotImplemented (so Python raises TypeError or tries the reflected op). A
-    // result of type T is wrapped into a new instance; any other type is
-    // converted normally (e.g. a dot product returning i64).
+    // Number-protocol operators. Binary ops support same-type operands and
+    // mixed operands (e.g. `vec * 2` if __mul__ takes an int); when the left
+    // operand isn't this type, the reflected form (`__radd__`/`__rsub__`/
+    // `__rmul__`) is tried. A result of type T is wrapped into a new instance;
+    // any other type is converted normally (e.g. a dot product returning i64).
     const NumberWrapper = struct {
-        fn build(cls: ?*zm.PyObject, result: T) ?*zm.PyObject {
-            const alloc = zm.PyMem_RawMalloc(Cell.allocSize());
-            if (alloc == null) {
-                zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
-                return null;
-            }
-            const obj = @as(?*zm.PyObject, @ptrCast(@alignCast(alloc)));
-            const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(alloc)));
-            header.ob_refcnt = 1;
-            header.ob_type = @as(?*anyopaque, @ptrCast(cls));
-            zm.Py_XINCREF(cls);
-            Cell.ptrFromObj(obj).* = result;
-            return obj;
+        fn isOurs(obj: ?*zm.PyObject) bool {
+            return std.mem.eql(u8, std.mem.span(zm.pz_type_name(obj)), short_name);
         }
         fn convertResult(cls: ?*zm.PyObject, result: anytype) ?*zm.PyObject {
-            if (@TypeOf(result) == T) return build(cls, result);
+            if (@TypeOf(result) == T) {
+                const obj = createInstance(T, cls) orelse return null;
+                Cell.ptrFromObj(obj).* = result;
+                if (comptime structHasPyObjectField(T)) ownFields(T, obj);
+                return obj;
+            }
             return funcwrap.returnToPyObjectValue(result);
         }
-        fn callBinary(comptime func: anytype, a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) ?*zm.PyObject {
-            const hdr_a = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(a_obj)));
-            const hdr_b = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(b_obj)));
-            if (hdr_a.ob_type != hdr_b.ob_type) return zm.Py_NewRef(zm.Py_NotImplemented());
-            const cls = @as(?*zm.PyObject, @ptrCast(@alignCast(hdr_a.ob_type)));
-            const a = Cell.ptrFromObj(a_obj);
-            const b = Cell.ptrFromObj(b_obj);
-            const RetT = @typeInfo(@TypeOf(func)).@"fn".return_type.?;
+        // Call `func(self, other)` where `self_obj` is this type and `other_obj`
+        // is converted to func's second parameter type. A conversion failure
+        // means the operand isn't acceptable -> NotImplemented.
+        fn invoke(comptime func: anytype, self_obj: ?*zm.PyObject, other_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const fi = @typeInfo(@TypeOf(func)).@"fn";
+            const OtherT = fi.params[1].type.?;
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const other = conversion.fromPyObject(OtherT, other_obj, arena.allocator()) catch {
+                zm.PyErr_Clear();
+                return zm.Py_NewRef(zm.Py_NotImplemented());
+            };
+            const self_ptr = Cell.ptrFromObj(self_obj);
+            const hdr = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(self_obj)));
+            const cls = @as(?*zm.PyObject, @ptrCast(@alignCast(hdr.ob_type)));
+            const RetT = fi.return_type.?;
             if (@typeInfo(RetT) == .error_union) {
-                const r = func(a, b) catch |e| {
+                const r = func(self_ptr, other) catch |e| {
                     errors.setPyExceptionIfNeeded(e);
                     return null;
                 };
                 return convertResult(cls, r);
             }
-            return convertResult(cls, func(a, b));
+            return convertResult(cls, func(self_ptr, other));
+        }
+        fn dispatch(comptime fwd: anytype, comptime has_rev: bool, comptime rev: anytype, a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) ?*zm.PyObject {
+            if (isOurs(a_obj)) return invoke(fwd, a_obj, b_obj);
+            if (comptime has_rev) {
+                if (isOurs(b_obj)) return invoke(rev, b_obj, a_obj);
+            }
+            return zm.Py_NewRef(zm.Py_NotImplemented());
         }
         fn callUnary(comptime func: anytype, self_obj: ?*zm.PyObject) ?*zm.PyObject {
             const hdr = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(self_obj)));
@@ -667,37 +765,38 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
+    // One binary-op wrapper, parameterized by the forward decl and (optional)
+    // reflected decl. `BinCtx` carries the two operands through the panic guard.
     const BinCtx = struct { a: ?*zm.PyObject, b: ?*zm.PyObject };
-    const AddWrapper = struct {
-        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
-            const c = @as(*BinCtx, @ptrCast(@alignCast(p)));
-            return NumberWrapper.callBinary(T.__add__, c.a, c.b);
+    const BinaryOp = struct {
+        fn make(comptime fwd: anytype, comptime has_rev: bool, comptime rev: anytype) type {
+            return struct {
+                fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+                    const c = @as(*BinCtx, @ptrCast(@alignCast(p)));
+                    return NumberWrapper.dispatch(fwd, has_rev, rev, c.a, c.b);
+                }
+                fn op(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+                    var ctx = BinCtx{ .a = a_obj, .b = b_obj };
+                    return zm.pz_guard(&thunk, &ctx);
+                }
+                // nb_power is ternary (a, b, modulo); the modulo is ignored.
+                fn powop(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject, _: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+                    var ctx = BinCtx{ .a = a_obj, .b = b_obj };
+                    return zm.pz_guard(&thunk, &ctx);
+                }
+            };
         }
-        fn op(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
-            var ctx = BinCtx{ .a = a_obj, .b = b_obj };
-            return zm.pz_guard(&thunk, &ctx);
-        }
-    };
-    const SubWrapper = struct {
-        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
-            const c = @as(*BinCtx, @ptrCast(@alignCast(p)));
-            return NumberWrapper.callBinary(T.__sub__, c.a, c.b);
-        }
-        fn op(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
-            var ctx = BinCtx{ .a = a_obj, .b = b_obj };
-            return zm.pz_guard(&thunk, &ctx);
-        }
-    };
-    const MulWrapper = struct {
-        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
-            const c = @as(*BinCtx, @ptrCast(@alignCast(p)));
-            return NumberWrapper.callBinary(T.__mul__, c.a, c.b);
-        }
-        fn op(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
-            var ctx = BinCtx{ .a = a_obj, .b = b_obj };
-            return zm.pz_guard(&thunk, &ctx);
-        }
-    };
+    }.make;
+
+    const AddWrapper = BinaryOp(if (has_add) T.__add__ else {}, has_radd, if (has_radd) T.__radd__ else {});
+    const SubWrapper = BinaryOp(if (has_sub) T.__sub__ else {}, has_rsub, if (has_rsub) T.__rsub__ else {});
+    const MulWrapper = BinaryOp(if (has_mul) T.__mul__ else {}, has_rmul, if (has_rmul) T.__rmul__ else {});
+    const TrueDivWrapper = BinaryOp(if (has_truediv) T.__truediv__ else {}, false, {});
+    const FloorDivWrapper = BinaryOp(if (has_floordiv) T.__floordiv__ else {}, false, {});
+    const ModWrapper = BinaryOp(if (has_mod) T.__mod__ else {}, false, {});
+    const PowWrapper = BinaryOp(if (has_pow) T.__pow__ else {}, false, {});
+    const MatMulWrapper = BinaryOp(if (has_matmul) T.__matmul__ else {}, false, {});
+
     const NegWrapper = struct {
         fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
             return NumberWrapper.callUnary(T.__neg__, @as(?*zm.PyObject, @ptrCast(@alignCast(p))));
@@ -716,6 +815,64 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
         fn op(self_obj: ?*zm.PyObject) callconv(.c) c_int {
             return zm.pz_guard_int(&thunk, @ptrCast(self_obj));
+        }
+    };
+
+    // tp_call: makes instances callable. Positional arguments only (kwargs are
+    // ignored); `__call__(self, ...)` is wrapped like a method.
+    const CallWrapper = struct {
+        const Ctx = struct { self: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject };
+        fn inner(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const fn_info = @typeInfo(@TypeOf(T.__call__)).@"fn";
+            const method_params = fn_info.params[1..];
+            const self_ptr = Cell.ptrFromObj(self_obj);
+            const expected = @as(isize, @intCast(method_params.len));
+            const actual: isize = if (args_obj) |a| zm.PyTuple_Size(a) else 0;
+            if (actual != expected) {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "wrong number of arguments");
+                return null;
+            }
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const a = arena.allocator();
+            var call_args: funcwrap.paramTypesTupleDirect(method_params) = undefined;
+            inline for (method_params, 0..) |param, i| {
+                const arg_obj = zm.PyTuple_GetItem(args_obj, @as(isize, @intCast(i)));
+                call_args[i] = conversion.fromPyObject(param.type.?, arg_obj, a) catch |err| {
+                    funcwrap.setConversionError(err);
+                    return null;
+                };
+            }
+            return funcwrap.callAndConvert(T.__call__, fn_info, .{self_ptr} ++ call_args);
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.args);
+        }
+        fn call(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .self = self_obj, .args = args_obj, .kwargs = kwargs_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+
+    // GC support for classes holding PyObject fields: visit fields in traverse,
+    // clear them in clear (breaks reference cycles).
+    const GcWrapper = struct {
+        fn traverse(self_obj: ?*zm.PyObject, visit: zm.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
+            const ptr = Cell.ptrFromObj(self_obj);
+            inline for (std.meta.fields(T)) |f| {
+                if (f.type == ?*zm.PyObject) {
+                    if (@field(ptr, f.name)) |o| {
+                        const r = visit(o, arg);
+                        if (r != 0) return r;
+                    }
+                }
+            }
+            return 0;
+        }
+        fn clear(self_obj: ?*zm.PyObject) callconv(.c) c_int {
+            releaseFields(T, self_obj);
+            return 0;
         }
     };
 
@@ -739,10 +896,17 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             });
 
             inline for (fields, 0..) |field, i| {
+                const is_pyobj_field = field.type == ?*zm.PyObject;
                 const FieldWrapper = struct {
                     fn getter(obj: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) ?*zm.PyObject {
                         const ptr = Cell.ptrFromObj(obj);
                         const val = @field(ptr, field.name);
+                        // A getset getter returns a new reference. For a stored
+                        // PyObject the instance only holds a borrow's worth, so
+                        // hand out a fresh reference (None if null).
+                        if (comptime is_pyobj_field) {
+                            return zm.Py_NewRef(val orelse zm.Py_None());
+                        }
                         return conversion.toPyObject(val) catch |err| {
                             funcwrap.setConversionError(err);
                             return null;
@@ -750,6 +914,14 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     }
                     fn setter(obj: ?*zm.PyObject, val: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) c_int {
                         const ptr = Cell.ptrFromObj(obj);
+                        // PyObject fields are framework-owned: incref the new
+                        // value, decref the old. (GC traverse/clear rely on this.)
+                        if (comptime is_pyobj_field) {
+                            const old = @field(ptr, field.name);
+                            @field(ptr, field.name) = zm.Py_XNewRef(val);
+                            zm.Py_XDECREF(old);
+                            return 0;
+                        }
                         // Fields are stored permanently, so a per-call arena
                         // would dangle; scalars don't allocate. Container-typed
                         // settable fields are not supported.
@@ -845,19 +1017,26 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_str) slot_count += 1;
             if (has_repr) slot_count += 1;
             if (has_hash) slot_count += 1;
-            if (has_eq) slot_count += 1;
+            if (has_richcompare) slot_count += 1;
             if (has_len) slot_count += 1;
             if (has_getitem) slot_count += 1;
             if (has_setitem) slot_count += 1;
             if (has_contains) slot_count += 1;
             if (has_next) slot_count += 1;
             if (has_iter) slot_count += 1;
+            if (has_call) slot_count += 1;
             if (has_doc) slot_count += 1;
             if (has_add) slot_count += 1;
             if (has_sub) slot_count += 1;
             if (has_mul) slot_count += 1;
+            if (has_truediv) slot_count += 1;
+            if (has_floordiv) slot_count += 1;
+            if (has_mod) slot_count += 1;
+            if (has_pow) slot_count += 1;
+            if (has_matmul) slot_count += 1;
             if (has_neg) slot_count += 1;
             if (has_bool) slot_count += 1;
+            if (is_gc) slot_count += 2; // tp_traverse + tp_clear
 
             var slots: [slot_count]zm.PyType_Slot = undefined;
             var slot_idx: usize = 0;
@@ -883,7 +1062,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_hash, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&HashWrapper.hash))) };
                 slot_idx += 1;
             }
-            if (has_eq) {
+            if (has_richcompare) {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_richcompare, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&RichcompareWrapper.richcompare))) };
                 slot_idx += 1;
             }
@@ -911,6 +1090,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_iternext, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NextWrapper.iternext))) };
                 slot_idx += 1;
             }
+            if (has_call) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_call, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&CallWrapper.call))) };
+                slot_idx += 1;
+            }
             if (has_doc) {
                 const doc_z: [:0]const u8 = config.doc;
                 slots[slot_idx] = .{ .slot = zm.Py_tp_doc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(doc_z.ptr))) };
@@ -928,6 +1111,26 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_nb_multiply, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&MulWrapper.op))) };
                 slot_idx += 1;
             }
+            if (has_truediv) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_true_divide, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&TrueDivWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_floordiv) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_floor_divide, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&FloorDivWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_mod) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_remainder, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&ModWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_pow) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_power, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&PowWrapper.powop))) };
+                slot_idx += 1;
+            }
+            if (has_matmul) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_matrix_multiply, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&MatMulWrapper.op))) };
+                slot_idx += 1;
+            }
             if (has_neg) {
                 slots[slot_idx] = .{ .slot = zm.Py_nb_negative, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NegWrapper.op))) };
                 slot_idx += 1;
@@ -936,13 +1139,26 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_nb_bool, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&BoolWrapper.op))) };
                 slot_idx += 1;
             }
+            if (is_gc) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_traverse, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&GcWrapper.traverse))) };
+                slot_idx += 1;
+                slots[slot_idx] = .{ .slot = zm.Py_tp_clear, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&GcWrapper.clear))) };
+                slot_idx += 1;
+            }
             slots[slot_idx] = .{ .slot = 0, .pfunc = null };
+
+            // HAVE_GC is required when the type provides tp_traverse/tp_clear.
+            // BASETYPE (subclassing from Python) is intentionally not set: it
+            // needs custom-dealloc orchestration (managed __dict__, subclass GC)
+            // that is out of scope here.
+            const base_flags = zm.Py_TPFLAGS_DEFAULT | zm.Py_TPFLAGS_HEAPTYPE;
+            const flags = if (is_gc) base_flags | zm.Py_TPFLAGS_HAVE_GC else base_flags;
 
             var spec = zm.PyType_Spec{
                 .name = type_name,
                 .basicsize = @as(c_int, @intCast(Cell.allocSize())),
                 .itemsize = 0,
-                .flags = zm.Py_TPFLAGS_DEFAULT | zm.Py_TPFLAGS_HEAPTYPE,
+                .flags = flags,
                 .slots = &slots,
             };
 

@@ -113,6 +113,12 @@ pub const Py_NotImplemented = pycall.Py_NotImplemented;
 pub const PyMem_RawMalloc = pycall.PyMem_RawMalloc;
 pub const PyMem_RawFree = pycall.PyMem_RawFree;
 
+pub const visitproc = pycall.visitproc;
+pub const PyType_GenericAlloc = pycall.PyType_GenericAlloc;
+pub const PyObject_Free = pycall.PyObject_Free;
+pub const PyObject_GC_UnTrack = pycall.PyObject_GC_UnTrack;
+pub const PyObject_GC_Del = pycall.PyObject_GC_Del;
+
 pub const pz_guard = pycall.pz_guard;
 pub const pz_guard_ssize = pycall.pz_guard_ssize;
 pub const pz_guard_int = pycall.pz_guard_int;
@@ -165,13 +171,23 @@ pub const Py_sq_contains = pytypes.Py_sq_contains;
 pub const Py_mp_subscript = pytypes.Py_mp_subscript;
 pub const Py_mp_ass_subscript = pytypes.Py_mp_ass_subscript;
 pub const Py_tp_doc = pytypes.Py_tp_doc;
+pub const Py_tp_call = pytypes.Py_tp_call;
+pub const Py_tp_traverse = pytypes.Py_tp_traverse;
+pub const Py_tp_clear = pytypes.Py_tp_clear;
 pub const Py_nb_add = pytypes.Py_nb_add;
+pub const Py_nb_true_divide = pytypes.Py_nb_true_divide;
+pub const Py_nb_floor_divide = pytypes.Py_nb_floor_divide;
+pub const Py_nb_remainder = pytypes.Py_nb_remainder;
+pub const Py_nb_power = pytypes.Py_nb_power;
+pub const Py_nb_matrix_multiply = pytypes.Py_nb_matrix_multiply;
 pub const Py_nb_subtract = pytypes.Py_nb_subtract;
 pub const Py_nb_multiply = pytypes.Py_nb_multiply;
 pub const Py_nb_negative = pytypes.Py_nb_negative;
 pub const Py_nb_bool = pytypes.Py_nb_bool;
 pub const Py_TPFLAGS_DEFAULT = pytypes.Py_TPFLAGS_DEFAULT;
 pub const Py_TPFLAGS_HEAPTYPE = pytypes.Py_TPFLAGS_HEAPTYPE;
+pub const Py_TPFLAGS_BASETYPE = pytypes.Py_TPFLAGS_BASETYPE;
+pub const Py_TPFLAGS_HAVE_GC = pytypes.Py_TPFLAGS_HAVE_GC;
 
 pub fn method(
     comptime name: [:0]const u8,

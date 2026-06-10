@@ -142,14 +142,26 @@ const GreeterClass = pz.PyClass(Greeter, .{
 
 Register the class in the module's `.classes` field.
 
-**Hooks** (declared on the struct): `init`, `__deinit__` (called on GC),
-`__str__`, `__repr__`, `__hash__`, `__eq__`; the container/iterator protocols
-`__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__iter__`, `__next__`
-(a type with `__next__` is automatically its own iterator; `__getitem__`
-normalizes negative indices when `__len__` is present); and the arithmetic
-operators `__add__`, `__sub__`, `__mul__`, `__neg__`, `__bool__`. Binary
-operators take two operands of the same type (mixed types yield
-`NotImplemented`); a result of type `Self` is wrapped into a new instance.
+**Hooks** (declared on the struct):
+
+- Lifecycle / repr: `init`, `__deinit__` (called on GC), `__str__`, `__repr__`,
+  `__hash__`, `__call__` (callable instances).
+- Comparisons: `__eq__` (and `__ne__` derived from it), plus `__lt__`, `__le__`,
+  `__gt__`, `__ge__` — define any subset (just `__lt__` enables `sorted()`).
+- Container / iterator protocols: `__len__`, `__getitem__`, `__setitem__`,
+  `__contains__`, `__iter__`, `__next__` (a type with `__next__` is its own
+  iterator; `__getitem__` normalizes negative indices when `__len__` is present).
+- Operators: `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`,
+  `__mod__`, `__pow__`, `__matmul__`, `__neg__`, `__bool__`. A binary op's second
+  parameter can be the same type (`*Self`) or a scalar (e.g. `i64` for
+  `vec * 2`); define `__radd__`/`__rsub__`/`__rmul__` for the reflected form
+  (`2 * vec`). Operands that don't match yield `NotImplemented`. A result of type
+  `Self` is wrapped into a new instance; any other type is converted normally.
+
+**Cyclic GC:** a class storing a `?*pz.PyObject` field automatically gets
+`Py_TPFLAGS_HAVE_GC` with `tp_traverse`/`tp_clear`, so reference cycles are
+collectable. The framework owns one reference per field (incref on set, decref
+on clear/dealloc); don't manually decref those fields in `__deinit__`.
 
 **`PyClass` config:**
 

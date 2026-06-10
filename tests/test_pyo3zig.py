@@ -121,6 +121,46 @@ except TypeError:
     check("Vec2 + int rejected", True)
 check("Vec2 __doc__", m.Vec2.__doc__ == "A 2D integer vector with arithmetic operators.")
 
+# test_full_comparisons (sorting, min/max via __lt__ etc)
+g_a, g_b, g_c = m.Greeter(1), m.Greeter(5), m.Greeter(3)
+check("Greeter <", (g_a < g_b) is True)
+check("Greeter >", (g_b > g_c) is True)
+check("Greeter <=", (g_a <= m.Greeter(1)) is True)
+check("Greeter >=", (g_b >= g_c) is True)
+check("sorted(Greeters)", [g.val for g in sorted([g_b, g_a, g_c])] == [1, 3, 5])
+check("max(Greeters)", max([g_a, g_b, g_c]).val == 5)
+
+# test_call (callable instances)
+check("Greeter() callable", m.Greeter(10)(5) == 15)
+
+# test_mixed_reflected_operators
+m1, m2 = m.Money(100), m.Money(50)
+check("Money + Money", (m1 + m2).cents == 150)
+check("Money - Money", (m1 - m2).cents == 50)
+check("Money * int (mixed)", (m1 * 3).cents == 300)
+check("int * Money (reflected)", (3 * m1).cents == 300)
+check("Money // int", (m.Money(100) // 3).cents == 33)
+check("Money % int", (m.Money(100) % 7).cents == 2)
+check("Money ** int", (m.Money(2) ** 5).cents == 32)
+try:
+    _ = m1 * m2  # __mul__ takes int, not Money
+    check("Money * Money rejected", False, "no exception")
+except TypeError:
+    check("Money * Money rejected", True)
+
+# test_gc_cycles (reference cycle must be collectable)
+import gc
+n0 = m.get_node_deinit_count()
+a_node = m.Node()
+b_node = m.Node()
+a_node.next = b_node
+b_node.next = a_node  # cycle: a -> b -> a
+check("Node.next getter", a_node.next is b_node)
+del a_node
+del b_node
+gc.collect()
+check("gc collects reference cycle", m.get_node_deinit_count() - n0 == 2)
+
 # test_protocols
 r = m.Range(0, 5)
 check("len(Range)", len(r) == 5)
@@ -156,7 +196,7 @@ except RuntimeError:
 check("Boomable(5).v", m.Boomable(5).v == 5)
 
 # test_module_constants
-check("VERSION constant", m.VERSION == "0.2.0")
+check("VERSION constant", m.VERSION == "0.3.0")
 check("MAX_ITEMS constant", m.MAX_ITEMS == 100)
 check("PI constant", abs(m.PI - 3.14159) < 1e-9)
 
