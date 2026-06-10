@@ -21,6 +21,19 @@ The extension author needs Zig. The end user just `pip install`s a wheel — no 
 | Honest manylinux | via `auditwheel` | **glibc pinned at build** (`gnu.2.28`) → the tag is true |
 | C-API access | `unsafe extern` | native C interop |
 
+## Performance
+
+Summing `0..1_000_000` in a tight loop, Zig (releasing the GIL) vs pure Python
+(`examples/bench.py`, CPython 3.13, x86_64):
+
+| Implementation | Time per call | Speedup |
+|---|---|---|
+| Zig (`pz.allowThreads`) | **3.3 ms** | — |
+| Pure Python `sum(range(n))` | 15.6 ms | 4.8× |
+| Pure Python `for` loop | 45.9 ms | 14× |
+
+Numbers vary by machine; run `python examples/bench.py` after building the demo.
+
 ## Install
 
 ```bash
@@ -145,23 +158,36 @@ Register the class in the module's `.classes` field.
 **Hooks** (declared on the struct):
 
 - Lifecycle / repr: `init`, `__deinit__` (called on GC), `__str__`, `__repr__`,
-  `__hash__`, `__call__` (callable instances).
+  `__hash__`, `__call__` (callable instances), `__enter__`/`__exit__` (context
+  manager, `with obj:`), `__reduce__` (pickle).
 - Comparisons: `__eq__` (and `__ne__` derived from it), plus `__lt__`, `__le__`,
   `__gt__`, `__ge__` — define any subset (just `__lt__` enables `sorted()`).
 - Container / iterator protocols: `__len__`, `__getitem__`, `__setitem__`,
   `__contains__`, `__iter__`, `__next__` (a type with `__next__` is its own
   iterator; `__getitem__` normalizes negative indices when `__len__` is present).
 - Operators: `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`,
-  `__mod__`, `__pow__`, `__matmul__`, `__neg__`, `__bool__`. A binary op's second
-  parameter can be the same type (`*Self`) or a scalar (e.g. `i64` for
-  `vec * 2`); define `__radd__`/`__rsub__`/`__rmul__` for the reflected form
-  (`2 * vec`). Operands that don't match yield `NotImplemented`. A result of type
-  `Self` is wrapped into a new instance; any other type is converted normally.
+  `__mod__`, `__pow__`, `__matmul__`, `__neg__`, `__bool__`, in-place
+  `__iadd__`/`__isub__`/`__imul__`, and conversions `__int__`/`__float__`/
+  `__index__`. A binary op's second parameter can be the same type (`*Self`) or a
+  scalar (e.g. `i64` for `vec * 2`); define `__radd__`/`__rsub__`/`__rmul__` for
+  the reflected form (`2 * vec`). Operands that don't match yield
+  `NotImplemented`. A result of type `Self` is wrapped into a new instance.
+- Attributes: `__getattr__(self, name)` (consulted only when normal lookup
+  fails) and `__setattr__(self, name, value)` (intercepts every assignment).
+- Buffer: `__buffer__(self)` returns a `[]const u8` exposed zero-copy to
+  `memoryview`/`bytes`/numpy (read-only).
 
 **Cyclic GC:** a class storing a `?*pz.PyObject` field automatically gets
 `Py_TPFLAGS_HAVE_GC` with `tp_traverse`/`tp_clear`, so reference cycles are
 collectable. The framework owns one reference per field (incref on set, decref
 on clear/dealloc); don't manually decref those fields in `__deinit__`.
+
+**Subclassing from Python:** value classes (no `__deinit__`, no PyObject fields)
+set `Py_TPFLAGS_BASETYPE`, so Python code can `class Sub(MyClass): ...` and
+inherit fields, methods, and operators. Classes that need a custom destructor or
+cyclic GC are not subclassable (they require teardown orchestration that is out
+of scope). Wider integers `i65..i128`/`u65..u128` are supported as arguments and
+return values (round-tripped through CPython's bigint).
 
 **`PyClass` config:**
 

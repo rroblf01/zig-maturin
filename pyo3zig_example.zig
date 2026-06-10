@@ -332,9 +332,83 @@ const Money = extern struct {
         while (n > 0) : (n -= 1) r *= self.cents;
         return .{ .cents = r };
     }
+    // In-place: money += money (mutates self).
+    pub fn __iadd__(self: *Money, o: *Money) void {
+        self.cents += o.cents;
+    }
+    // Numeric conversions: int(m), float(m).
+    pub fn __int__(self: *Money) i64 {
+        return self.cents;
+    }
+    pub fn __float__(self: *Money) f64 {
+        return @floatFromInt(self.cents);
+    }
 };
 
 const MoneyClass = pz.PyClass(Money, .{ .init_args = &.{"cents"} });
+
+// Context manager: `with Resource() as r` sets/clears `open`.
+const Resource = extern struct {
+    open: i64,
+    pub fn init() Resource {
+        return .{ .open = 0 };
+    }
+    pub fn __enter__(self: *Resource) void {
+        self.open = 1;
+    }
+    pub fn __exit__(self: *Resource, _: ?*pz.PyObject, _: ?*pz.PyObject, _: ?*pz.PyObject) bool {
+        self.open = 0;
+        return false; // don't suppress exceptions
+    }
+};
+const ResourceClass = pz.PyClass(Resource, .{});
+
+// __setattr__ intercepts every attribute assignment.
+const Recorder = extern struct {
+    sets: i64,
+    pub fn init() Recorder {
+        return .{ .sets = 0 };
+    }
+    pub fn __setattr__(self: *Recorder, _: []const u8, _: ?*pz.PyObject) void {
+        self.sets += 1;
+    }
+};
+const RecorderClass = pz.PyClass(Recorder, .{});
+
+// __getattr__ is consulted only when normal lookup fails.
+const Dynamic = extern struct {
+    base: i64,
+    pub fn init(base: i64) Dynamic {
+        return .{ .base = base };
+    }
+    pub fn __getattr__(self: *Dynamic, name: []const u8) i64 {
+        return self.base + @as(i64, @intCast(name.len));
+    }
+    // __index__ lets the object act as an integer index (hex/bin/slicing).
+    pub fn __index__(self: *Dynamic) i64 {
+        return self.base;
+    }
+};
+const DynamicClass = pz.PyClass(Dynamic, .{ .init_args = &.{"base"} });
+
+// Read-only buffer protocol: exposes 8 bytes zero-copy to memoryview/bytes().
+const Bytes8 = extern struct {
+    data: [8]u8,
+    pub fn init(fill: i64) Bytes8 {
+        var b: Bytes8 = .{ .data = undefined };
+        for (&b.data) |*x| x.* = @intCast(fill);
+        return b;
+    }
+    pub fn __buffer__(self: *Bytes8) []const u8 {
+        return self.data[0..];
+    }
+};
+const Bytes8Class = pz.PyClass(Bytes8, .{});
+
+// Integer wider than 64 bits, round-tripped through CPython's bigint.
+fn big_mul(a: i128, b: i128) i128 {
+    return a * b;
+}
 
 // A class holding a Python object reference -> participates in cyclic GC. The
 // framework owns the `next` reference, visits it in tp_traverse, and clears it
@@ -403,7 +477,7 @@ fn __pyi__() []const u8 {
 const Mod = pz.pyModule("pyo3zig_demo", .{
     .doc = "Demo module built with pyo3zig.",
     .constants = .{
-        .VERSION = "0.3.0",
+        .VERSION = "0.4.0",
         .MAX_ITEMS = @as(i64, 100),
         .PI = @as(f64, 3.14159),
     },
@@ -431,8 +505,9 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("repeat_bytes", repeat_bytes),
         pz.pyFnNamed("get_deinit_count", get_deinit_count),
         pz.pyFnNamed("get_node_deinit_count", get_node_deinit_count),
+        pz.pyFnNamed("big_mul", big_mul),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, RecorderClass, DynamicClass, Bytes8Class },
 });
 
 comptime {

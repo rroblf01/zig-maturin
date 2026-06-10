@@ -62,6 +62,11 @@ pub const PyErr_Occurred = pycall.PyErr_Occurred;
 pub const PyErr_Clear = pycall.PyErr_Clear;
 
 pub const PyObject_GetAttrString = pycall.PyObject_GetAttrString;
+pub const PyObject_GenericGetAttr = pycall.PyObject_GenericGetAttr;
+pub const PyObject_GenericSetAttr = pycall.PyObject_GenericSetAttr;
+pub const PyLong_FromString = pycall.PyLong_FromString;
+pub const PyBuffer_FillInfo = pycall.PyBuffer_FillInfo;
+pub const Py_bf_getbuffer = pytypes.Py_bf_getbuffer;
 pub const PyObject_SetAttrString = pycall.PyObject_SetAttrString;
 pub const PyObject_CallObject = pycall.PyObject_CallObject;
 pub const PyObject_Str = pycall.PyObject_Str;
@@ -134,6 +139,7 @@ pub const PyType_IsSubtype = pycall.PyType_IsSubtype;
 
 pub const PyErr_Format = pycall.PyErr_Format;
 pub const PyErr_NewException = pycall.PyErr_NewException;
+pub const PyErr_ExceptionMatches = pycall.PyErr_ExceptionMatches;
 
 pub const PyObject_Repr = pycall.PyObject_Repr;
 pub const PyObject_Type = pycall.PyObject_Type;
@@ -184,6 +190,14 @@ pub const Py_nb_subtract = pytypes.Py_nb_subtract;
 pub const Py_nb_multiply = pytypes.Py_nb_multiply;
 pub const Py_nb_negative = pytypes.Py_nb_negative;
 pub const Py_nb_bool = pytypes.Py_nb_bool;
+pub const Py_nb_int = pytypes.Py_nb_int;
+pub const Py_nb_float = pytypes.Py_nb_float;
+pub const Py_nb_index = pytypes.Py_nb_index;
+pub const Py_nb_inplace_add = pytypes.Py_nb_inplace_add;
+pub const Py_nb_inplace_subtract = pytypes.Py_nb_inplace_subtract;
+pub const Py_nb_inplace_multiply = pytypes.Py_nb_inplace_multiply;
+pub const Py_tp_getattro = pytypes.Py_tp_getattro;
+pub const Py_tp_setattro = pytypes.Py_tp_setattro;
 pub const Py_TPFLAGS_DEFAULT = pytypes.Py_TPFLAGS_DEFAULT;
 pub const Py_TPFLAGS_HEAPTYPE = pytypes.Py_TPFLAGS_HEAPTYPE;
 pub const Py_TPFLAGS_BASETYPE = pytypes.Py_TPFLAGS_BASETYPE;

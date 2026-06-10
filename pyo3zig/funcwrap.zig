@@ -212,10 +212,13 @@ pub fn bindArgs(
         }
 
         if (arg_obj) |o| {
+            conversion.setArgContext(arg_names[i]);
             call_args[i] = conversion.fromPyObject(ParamT, o, alloc) catch |err| {
                 setConversionError(err);
+                conversion.setArgContext(null);
                 return null;
             };
+            conversion.setArgContext(null);
         } else if (comptime has_defaults and @hasField(@TypeOf(spec.defaults), arg_names[i])) {
             call_args[i] = @field(spec.defaults, arg_names[i]);
         } else {

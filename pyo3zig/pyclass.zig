@@ -349,8 +349,40 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_richcompare = has_eq or has_lt or has_le or has_gt or has_ge;
     const has_call = @hasDecl(T, "__call__");
     const has_doc = @hasField(@TypeOf(config), "doc");
+    // Numeric conversions and in-place operators.
+    const has_int = @hasDecl(T, "__int__");
+    const has_float_conv = @hasDecl(T, "__float__");
+    const has_index = @hasDecl(T, "__index__");
+    const has_iadd = @hasDecl(T, "__iadd__");
+    const has_isub = @hasDecl(T, "__isub__");
+    const has_imul = @hasDecl(T, "__imul__");
+    // Dynamic attribute access (fall back to generic lookup).
+    const has_getattr = @hasDecl(T, "__getattr__");
+    const has_setattr = @hasDecl(T, "__setattr__");
+    // Plain methods auto-registered when present (context manager, pickle).
+    const has_enter = @hasDecl(T, "__enter__");
+    const has_exit = @hasDecl(T, "__exit__");
+    const has_reduce = @hasDecl(T, "__reduce__");
+    // Read-only buffer protocol: __buffer__(self) returns a byte slice viewed
+    // zero-copy (e.g. by numpy / memoryview). The slice must stay valid while
+    // the buffer is held, so back it with a field of the instance.
+    const has_buffer = @hasDecl(T, "__buffer__");
 
     const is_gc = structHasPyObjectField(T);
+    const has_deinit = @hasDecl(T, "__deinit__");
+    // A class needs a custom tp_dealloc only when it must run __deinit__ or
+    // release PyObject fields. Otherwise we omit tp_dealloc and let CPython's
+    // default handle teardown — which also makes the type safe to subclass from
+    // Python (the default orchestrates a subclass's managed __dict__ and GC).
+    const needs_custom_dealloc = has_deinit or is_gc;
+    const can_subclass = !needs_custom_dealloc;
+
+    // Cached type object (set once the type is built), used for isinstance
+    // checks in operator dispatch so subclasses dispatch correctly.
+    const TypeRef = struct {
+        const Owner = T; // force a distinct type (and static var) per class
+        var obj: ?*zm.PyObject = null;
+    };
 
     const DeallocWrapper = struct {
         fn dealloc(obj: ?*zm.PyObject) callconv(.c) void {
@@ -705,7 +737,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     // `__rmul__`) is tried. A result of type T is wrapped into a new instance;
     // any other type is converted normally (e.g. a dot product returning i64).
     const NumberWrapper = struct {
+        // True if `obj` is an instance of this class or a Python subclass. Uses
+        // the cached type object so subclasses (with a different tp_name) still
+        // dispatch operators correctly.
         fn isOurs(obj: ?*zm.PyObject) bool {
+            if (TypeRef.obj) |ty| return zm.PyObject_IsInstance(obj, ty) == 1;
             return std.mem.eql(u8, std.mem.span(zm.pz_type_name(obj)), short_name);
         }
         fn convertResult(cls: ?*zm.PyObject, result: anytype) ?*zm.PyObject {
@@ -747,6 +783,33 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (comptime has_rev) {
                 if (isOurs(b_obj)) return invoke(rev, b_obj, a_obj);
             }
+            return zm.Py_NewRef(zm.Py_NotImplemented());
+        }
+        // In-place operators mutate `self` in place (the op fn returns void) and
+        // yield a new reference to the same object.
+        fn invokeInplace(comptime func: anytype, self_obj: ?*zm.PyObject, other_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const fi = @typeInfo(@TypeOf(func)).@"fn";
+            const OtherT = fi.params[1].type.?;
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const other = conversion.fromPyObject(OtherT, other_obj, arena.allocator()) catch {
+                zm.PyErr_Clear();
+                return zm.Py_NewRef(zm.Py_NotImplemented());
+            };
+            const self_ptr = Cell.ptrFromObj(self_obj);
+            const RetT = fi.return_type.?;
+            if (@typeInfo(RetT) == .error_union) {
+                func(self_ptr, other) catch |e| {
+                    errors.setPyExceptionIfNeeded(e);
+                    return null;
+                };
+            } else {
+                func(self_ptr, other);
+            }
+            return zm.Py_NewRef(self_obj);
+        }
+        fn dispatchInplace(comptime func: anytype, a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) ?*zm.PyObject {
+            if (isOurs(a_obj)) return invokeInplace(func, a_obj, b_obj);
             return zm.Py_NewRef(zm.Py_NotImplemented());
         }
         fn callUnary(comptime func: anytype, self_obj: ?*zm.PyObject) ?*zm.PyObject {
@@ -815,6 +878,139 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
         fn op(self_obj: ?*zm.PyObject) callconv(.c) c_int {
             return zm.pz_guard_int(&thunk, @ptrCast(self_obj));
+        }
+    };
+
+    // Scalar-returning unary conversions: __int__, __float__, __index__.
+    const ScalarUnary = struct {
+        fn make(comptime func: anytype) type {
+            return struct {
+                fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+                    const self_obj = @as(?*zm.PyObject, @ptrCast(@alignCast(p)));
+                    const ptr = Cell.ptrFromObj(self_obj);
+                    const fi = @typeInfo(@TypeOf(func)).@"fn";
+                    return callFuncReturningPyObject(func, fi, .{ptr});
+                }
+                fn op(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+                    return zm.pz_guard(&thunk, @ptrCast(self_obj));
+                }
+            };
+        }
+    }.make;
+    const IntWrapper = ScalarUnary(if (has_int) T.__int__ else {});
+    const FloatWrapper = ScalarUnary(if (has_float_conv) T.__float__ else {});
+    const IndexWrapper = ScalarUnary(if (has_index) T.__index__ else {});
+
+    // In-place operators (__iadd__/__isub__/__imul__).
+    const InplaceOp = struct {
+        fn make(comptime func: anytype) type {
+            return struct {
+                fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+                    const c = @as(*BinCtx, @ptrCast(@alignCast(p)));
+                    return NumberWrapper.dispatchInplace(func, c.a, c.b);
+                }
+                fn op(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+                    var ctx = BinCtx{ .a = a_obj, .b = b_obj };
+                    return zm.pz_guard(&thunk, &ctx);
+                }
+            };
+        }
+    }.make;
+    const IaddWrapper = InplaceOp(if (has_iadd) T.__iadd__ else {});
+    const IsubWrapper = InplaceOp(if (has_isub) T.__isub__ else {});
+    const ImulWrapper = InplaceOp(if (has_imul) T.__imul__ else {});
+
+    // tp_getattro: only consulted when normal attribute lookup fails, matching
+    // Python's __getattr__ semantics. __getattr__(self, name: []const u8).
+    const GetAttrWrapper = struct {
+        const Ctx = struct { self: ?*zm.PyObject, name: ?*zm.PyObject };
+        fn inner(self_obj: ?*zm.PyObject, name_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const res = zm.PyObject_GenericGetAttr(self_obj, name_obj);
+            if (res != null) return res;
+            // Normal lookup failed; only fall back on AttributeError.
+            if (zm.PyErr_ExceptionMatches(zm.PyExc_AttributeError()) == 0) return null;
+            zm.PyErr_Clear();
+            const ptr = Cell.ptrFromObj(self_obj);
+            const fi = @typeInfo(@TypeOf(T.__getattr__)).@"fn";
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const name = conversion.fromPyObject([]const u8, name_obj, arena.allocator()) catch {
+                return null;
+            };
+            return callFuncReturningPyObject(T.__getattr__, fi, .{ ptr, name });
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.name);
+        }
+        fn getattro(self_obj: ?*zm.PyObject, name_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .self = self_obj, .name = name_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+
+    // tp_setattro: user handles every attribute assignment.
+    // __setattr__(self, name: []const u8, value: ?*PyObject) (void or !void).
+    const SetAttrWrapper = struct {
+        const Ctx = struct { self: ?*zm.PyObject, name: ?*zm.PyObject, value: ?*zm.PyObject };
+        fn inner(self_obj: ?*zm.PyObject, name_obj: ?*zm.PyObject, value_obj: ?*zm.PyObject) c_int {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const fi = @typeInfo(@TypeOf(T.__setattr__)).@"fn";
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const name = conversion.fromPyObject([]const u8, name_obj, arena.allocator()) catch return -1;
+            if (@typeInfo(fi.return_type orelse void) == .error_union) {
+                T.__setattr__(ptr, name, value_obj) catch |e| {
+                    errors.setPyExceptionIfNeeded(e);
+                    return -1;
+                };
+            } else {
+                T.__setattr__(ptr, name, value_obj);
+            }
+            return 0;
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) c_int {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.name, c.value);
+        }
+        fn setattro(self_obj: ?*zm.PyObject, name_obj: ?*zm.PyObject, value_obj: ?*zm.PyObject) callconv(.c) c_int {
+            var ctx = Ctx{ .self = self_obj, .name = name_obj, .value = value_obj };
+            return zm.pz_guard_int(&thunk, &ctx);
+        }
+    };
+
+    // __enter__ auto-method: returns the user's value, or `self` if it returns
+    // void (the common `with x as x` case).
+    const EnterWrapper = struct {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const fi = @typeInfo(@TypeOf(T.__enter__)).@"fn";
+            const RetT = fi.return_type orelse void;
+            if (RetT == void) {
+                T.__enter__(ptr);
+                return zm.Py_NewRef(self_obj);
+            }
+            return callFuncReturningPyObject(T.__enter__, fi, .{ptr});
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn meth(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            _ = args_obj;
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
+        }
+    };
+
+    // bf_getbuffer: expose a read-only contiguous byte view (memoryview/numpy).
+    const BufferWrapper = struct {
+        fn getbuffer(exporter: ?*zm.PyObject, view: ?*anyopaque, flags: c_int) callconv(.c) c_int {
+            if (view == null) {
+                zm.PyErr_SetString(zm.PyExc_RuntimeError(), "NULL buffer view");
+                return -1;
+            }
+            const ptr = Cell.ptrFromObj(exporter);
+            const data: []const u8 = T.__buffer__(ptr);
+            return zm.PyBuffer_FillInfo(view, exporter, @constCast(@ptrCast(data.ptr)), @as(isize, @intCast(data.len)), 1, flags);
         }
     };
 
@@ -997,23 +1193,45 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 }
             }
 
+            // Auto-registered plain methods (context manager + pickle hooks).
+            const auto_methods = comptime blk: {
+                var arr: []const zm.PyMethodDef = &.{};
+                if (has_enter) arr = arr ++ &[_]zm.PyMethodDef{.{
+                    .ml_name = @as(?[*:0]const u8, "__enter__"),
+                    .ml_meth = &EnterWrapper.meth,
+                    .ml_flags = zm.METH_VARARGS,
+                    .ml_doc = null,
+                }};
+                if (has_exit) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__exit__", T.__exit__)};
+                if (has_reduce) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__reduce__", T.__reduce__)};
+                break :blk arr;
+            };
+            const has_any_method = has_methods or auto_methods.len > 0;
+
             var method_defs: []zm.PyMethodDef = &.{};
-            if (has_methods) {
-                const methods = config.methods;
-                const method_count = methods.len + 1;
+            if (has_any_method) {
+                const cfg_methods: []const zm.PyMethodDef = if (has_methods) config.methods else &.{};
+                const method_count = cfg_methods.len + auto_methods.len + 1;
                 method_defs = std.heap.c_allocator.alloc(zm.PyMethodDef, method_count) catch {
                     zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
                     zm.PyMem_RawFree(getset_ptr);
                     return null;
                 };
-                for (methods, 0..) |m, i| {
-                    method_defs[i] = m;
+                var midx: usize = 0;
+                for (cfg_methods) |m| {
+                    method_defs[midx] = m;
+                    midx += 1;
+                }
+                inline for (auto_methods) |m| {
+                    method_defs[midx] = m;
+                    midx += 1;
                 }
                 method_defs[method_count - 1] = .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null };
             }
 
-            comptime var slot_count: usize = 4;
-            if (has_methods) slot_count += 1;
+            comptime var slot_count: usize = 3; // dealloc(optional) handled below
+            if (needs_custom_dealloc) slot_count += 1;
+            if (has_any_method) slot_count += 1;
             if (has_str) slot_count += 1;
             if (has_repr) slot_count += 1;
             if (has_hash) slot_count += 1;
@@ -1036,17 +1254,31 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_matmul) slot_count += 1;
             if (has_neg) slot_count += 1;
             if (has_bool) slot_count += 1;
+            if (has_int) slot_count += 1;
+            if (has_float_conv) slot_count += 1;
+            if (has_index) slot_count += 1;
+            if (has_iadd) slot_count += 1;
+            if (has_isub) slot_count += 1;
+            if (has_imul) slot_count += 1;
+            if (has_getattr) slot_count += 1;
+            if (has_setattr) slot_count += 1;
+            if (has_buffer) slot_count += 1;
             if (is_gc) slot_count += 2; // tp_traverse + tp_clear
 
             var slots: [slot_count]zm.PyType_Slot = undefined;
             var slot_idx: usize = 0;
-            slots[slot_idx] = .{ .slot = zm.Py_tp_dealloc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DeallocWrapper.dealloc))) };
-            slot_idx += 1;
+            // tp_dealloc only when we must run __deinit__ or release fields;
+            // omitting it lets CPython's default dealloc make the type
+            // subclassable from Python.
+            if (needs_custom_dealloc) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_dealloc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DeallocWrapper.dealloc))) };
+                slot_idx += 1;
+            }
             slots[slot_idx] = .{ .slot = zm.Py_tp_new, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NewWrapper.new))) };
             slot_idx += 1;
             slots[slot_idx] = .{ .slot = zm.Py_tp_getset, .pfunc = @as(?*anyopaque, @ptrCast(getset_defs)) };
             slot_idx += 1;
-            if (has_methods) {
+            if (has_any_method) {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_methods, .pfunc = @as(?*anyopaque, @ptrCast(method_defs.ptr)) };
                 slot_idx += 1;
             }
@@ -1139,6 +1371,42 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_nb_bool, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&BoolWrapper.op))) };
                 slot_idx += 1;
             }
+            if (has_int) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_int, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IntWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_float_conv) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_float, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&FloatWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_index) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_index, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IndexWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_iadd) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_add, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IaddWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_isub) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_subtract, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IsubWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_imul) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_multiply, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&ImulWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_getattr) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_getattro, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&GetAttrWrapper.getattro))) };
+                slot_idx += 1;
+            }
+            if (has_setattr) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_setattro, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&SetAttrWrapper.setattro))) };
+                slot_idx += 1;
+            }
+            if (has_buffer) {
+                slots[slot_idx] = .{ .slot = zm.Py_bf_getbuffer, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&BufferWrapper.getbuffer))) };
+                slot_idx += 1;
+            }
             if (is_gc) {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_traverse, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&GcWrapper.traverse))) };
                 slot_idx += 1;
@@ -1148,11 +1416,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             slots[slot_idx] = .{ .slot = 0, .pfunc = null };
 
             // HAVE_GC is required when the type provides tp_traverse/tp_clear.
-            // BASETYPE (subclassing from Python) is intentionally not set: it
-            // needs custom-dealloc orchestration (managed __dict__, subclass GC)
-            // that is out of scope here.
-            const base_flags = zm.Py_TPFLAGS_DEFAULT | zm.Py_TPFLAGS_HEAPTYPE;
-            const flags = if (is_gc) base_flags | zm.Py_TPFLAGS_HAVE_GC else base_flags;
+            // BASETYPE lets Python subclass the type; only safe when CPython's
+            // default dealloc handles teardown (no custom dealloc of ours).
+            var flags = zm.Py_TPFLAGS_DEFAULT | zm.Py_TPFLAGS_HEAPTYPE;
+            if (is_gc) flags |= zm.Py_TPFLAGS_HAVE_GC;
+            if (can_subclass) flags |= zm.Py_TPFLAGS_BASETYPE;
 
             var spec = zm.PyType_Spec{
                 .name = type_name,
@@ -1163,6 +1431,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             };
 
             const result = zm.PyType_FromSpec(&spec);
+            TypeRef.obj = result;
             return result;
         }
     };

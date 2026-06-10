@@ -126,6 +126,19 @@ pub extern fn PyErr_Occurred() callconv(.c) ?*PyObject;
 pub extern fn PyErr_Clear() callconv(.c) void;
 pub extern fn PyErr_Format(?*PyObject, [*:0]const u8, ...) callconv(.c) ?*PyObject;
 pub extern fn PyErr_NewException([*:0]const u8, ?*PyObject, ?*PyObject) callconv(.c) ?*PyObject;
+pub extern fn PyErr_ExceptionMatches(?*PyObject) callconv(.c) c_int;
+
+// Default attribute access (used as fallback by __getattr__/__setattr__).
+pub extern fn PyObject_GenericGetAttr(?*PyObject, ?*PyObject) callconv(.c) ?*PyObject;
+pub extern fn PyObject_GenericSetAttr(?*PyObject, ?*PyObject, ?*PyObject) callconv(.c) c_int;
+
+// Build an int from a decimal string (used for integers wider than 64 bits).
+pub extern fn PyLong_FromString([*:0]const u8, ?*?[*:0]u8, c_int) callconv(.c) ?*PyObject;
+
+// Buffer protocol: fill a Py_buffer (opaque here) describing a contiguous
+// region. Handles format/shape/strides and increfs the exporter; the caller's
+// PyBuffer_Release later decrefs it.
+pub extern fn PyBuffer_FillInfo(?*anyopaque, ?*PyObject, ?*anyopaque, isize, c_int, c_int) callconv(.c) c_int;
 
 // Object utilities
 pub extern fn PyObject_GetAttrString(?*PyObject, [*:0]const u8) callconv(.c) ?*PyObject;

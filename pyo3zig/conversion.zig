@@ -33,16 +33,50 @@ fn shortName(comptime T: type) []const u8 {
     return if (dot) |d| full[d + 1 ..] else full;
 }
 
-/// Set a precise TypeError: "expected <wanted>, got <actual python type>".
+/// Optional argument label (e.g. "base") prepended to type-error messages. Set
+/// by the keyword-argument binder around each conversion; the GIL serializes
+/// access. Reset to null after use.
+threadlocal var arg_context: ?[]const u8 = null;
+
+pub fn setArgContext(name: ?[]const u8) void {
+    arg_context = name;
+}
+
+/// Set a precise TypeError: "expected <wanted>, got <actual python type>",
+/// prefixed with the argument name when one is in context.
 fn raiseTypeError(comptime T: type, obj: ?*zm.PyObject) void {
     const actual = std.mem.span(zm.pz_type_name(obj));
-    var buf: [192]u8 = undefined;
-    const m = std.fmt.bufPrint(&buf, "expected {s}, got {s}", .{ expectedName(T), actual }) catch {
+    var buf: [224]u8 = undefined;
+    const m = if (arg_context) |name|
+        std.fmt.bufPrint(&buf, "argument '{s}': expected {s}, got {s}", .{ name, expectedName(T), actual })
+    else
+        std.fmt.bufPrint(&buf, "expected {s}, got {s}", .{ expectedName(T), actual });
+    const msg = m catch {
         zm.PyErr_SetString(zm.PyExc_TypeError(), "type error");
         return;
     };
-    buf[@min(m.len, buf.len - 1)] = 0;
+    buf[@min(msg.len, buf.len - 1)] = 0;
     zm.PyErr_SetString(zm.PyExc_TypeError(), @as([*:0]const u8, @ptrCast(&buf)));
+}
+
+/// Integers wider than 64 bits are round-tripped through their decimal string
+/// (CPython's int is arbitrary-precision; there is no fixed-width C path).
+fn bigIntToPy(comptime T: type, value: T) ConversionError!?*zm.PyObject {
+    var buf: [48]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return error.Overflow;
+    buf[s.len] = 0;
+    return zm.PyLong_FromString(@as([*:0]const u8, @ptrCast(&buf)), null, 10);
+}
+
+fn bigIntFromPy(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
+    if (zm.PyLong_Check(obj) == 0) {
+        raiseTypeError(T, obj);
+        return error.PythonTypeError;
+    }
+    const str_obj = zm.PyObject_Str(obj) orelse return error.PythonValueError;
+    defer zm.Py_XDECREF(str_obj);
+    const c = zm.PyUnicode_AsUTF8(str_obj) orelse return error.PythonValueError;
+    return std.fmt.parseInt(T, std.mem.sliceTo(c, 0), 10) catch error.Overflow;
 }
 
 pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
@@ -62,12 +96,12 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
                 if (info.bits <= 64) {
                     return zm.PyLong_FromLongLong(value);
                 }
-                return error.Overflow;
+                return bigIntToPy(T, value);
             } else {
                 if (info.bits <= 64) {
                     return zm.PyLong_FromUnsignedLongLong(value);
                 }
-                return error.Overflow;
+                return bigIntToPy(T, value);
             }
         },
         .float => {
@@ -211,7 +245,7 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                     }
                     return @intCast(val);
                 }
-                return error.Overflow;
+                return bigIntFromPy(T, obj);
             } else {
                 if (info.bits <= 64) {
                     const val = zm.PyLong_AsUnsignedLongLong(obj);
@@ -222,7 +256,7 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                     }
                     return @intCast(val);
                 }
-                return error.Overflow;
+                return bigIntFromPy(T, obj);
             }
         },
         .float => {

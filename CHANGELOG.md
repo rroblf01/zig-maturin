@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-06-10
+
+### Added
+- **Subclassing from Python**: value classes (no `__deinit__`, no PyObject
+  fields) set `Py_TPFLAGS_BASETYPE`, so `class Sub(MyClass): ...` inherits
+  fields, methods, and operators. Instances now allocate via the type's own
+  basicsize, so subclasses are correctly sized.
+- **Buffer protocol** (read-only): `__buffer__(self) []const u8` exposes a
+  zero-copy view to `memoryview`/`bytes`/numpy.
+- **Numeric conversions**: `__int__`, `__float__`, `__index__`.
+- **In-place operators**: `__iadd__`, `__isub__`, `__imul__`.
+- **Context manager**: `__enter__`/`__exit__` (auto-registered; `__enter__`
+  returns `self` when it returns void). **Pickle**: `__reduce__`.
+- **Dynamic attributes**: `__getattr__` (only when normal lookup fails) and
+  `__setattr__` (intercepts all assignments).
+- **Integers wider than 64 bits** (`i65..i128`, `u65..u128`) as arguments and
+  return values, round-tripped through CPython's arbitrary-precision int.
+- **Argument names in type errors** for keyword-bound calls
+  (`argument 'base': expected int, got str`).
+- **CI leak-check job**: the full suite runs under Valgrind (`PYTHONMALLOC=malloc`,
+  definite-leak detection) to catch C-level leaks.
+- **Benchmarks** documented in the README.
+
+### Not yet
+- **Inheriting a built-in base** (e.g. custom `Exception` subclasses) and
+  subclassing classes that need a custom destructor — both need teardown
+  orchestration beyond this release.
+- **weakref** support (requires weakref-clearing in a custom dealloc).
+
 ## [0.3.0] - 2026-06-10
 
 ### Added

@@ -1,4 +1,5 @@
 """Tests for the pyo3zig extension module."""
+import gc
 import sys
 sys.path.insert(0, '.')
 import pyo3zig_demo as m
@@ -148,8 +149,60 @@ try:
 except TypeError:
     check("Money * Money rejected", True)
 
+# test_inplace_and_numeric_conversions
+mi = m.Money(100)
+mi += m.Money(50)
+check("Money += (in-place)", mi.cents == 150)
+check("int(Money)", int(m.Money(100)) == 100)
+check("float(Money)", float(m.Money(100)) == 100.0)
+
+# test_context_manager
+res = m.Resource()
+check("Resource starts closed", res.open == 0)
+with m.Resource() as r:
+    check("Resource open in with", r.open == 1)
+check("with-block returns self", r.open == 0)
+
+# test_setattr
+rec = m.Recorder()
+rec.anything = 5
+rec.other = 7
+check("__setattr__ intercepts all sets", rec.sets == 2)
+
+# test_getattr (generic lookup first, then fallback)
+dyn = m.Dynamic(10)
+check("Dynamic normal field", dyn.base == 10)
+check("Dynamic __getattr__ fallback", dyn.foo == 10 + 3)
+check("Dynamic __index__ (hex)", hex(m.Dynamic(255)) == "0xff")
+
+# test_buffer_protocol (zero-copy memoryview / bytes)
+b8 = m.Bytes8(65)  # fill with 'A'
+mv = memoryview(b8)
+check("memoryview len", len(mv) == 8)
+check("memoryview content", bytes(b8) == b"AAAAAAAA")
+
+# test_big_ints (>64-bit)
+check("big_mul 2**100", m.big_mul(2**50, 2**50) == 2**100)
+check("big_mul negative", m.big_mul(-(2**60), 8) == -(2**63))
+check("big_mul roundtrip", m.big_mul(123456789012345678901234567890, 1) == 123456789012345678901234567890)
+
+# test_subclass_from_python (value classes are subclassable)
+class MyVec(m.Vec2):
+    def norm(self):
+        return self.x * self.x + self.y * self.y
+mv2 = MyVec(3, 4)
+check("subclass instance", isinstance(mv2, m.Vec2) and mv2.x == 3)
+check("subclass method", mv2.norm() == 25)
+check("subclass operator inherited", (mv2 + m.Vec2(1, 1)).x == 4)
+
+# test_kwargs_arg_name_error
+try:
+    m.power(base="oops")
+    check("kwargs arg-name error", False, "no exception")
+except TypeError as e:
+    check("kwargs arg-name error", "argument 'base'" in str(e) and "expected int" in str(e), str(e))
+
 # test_gc_cycles (reference cycle must be collectable)
-import gc
 n0 = m.get_node_deinit_count()
 a_node = m.Node()
 b_node = m.Node()
@@ -196,7 +249,7 @@ except RuntimeError:
 check("Boomable(5).v", m.Boomable(5).v == 5)
 
 # test_module_constants
-check("VERSION constant", m.VERSION == "0.3.0")
+check("VERSION constant", m.VERSION == "0.4.0")
 check("MAX_ITEMS constant", m.MAX_ITEMS == 100)
 check("PI constant", abs(m.PI - 3.14159) < 1e-9)
 
