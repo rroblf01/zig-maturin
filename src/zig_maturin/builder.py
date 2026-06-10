@@ -44,6 +44,29 @@ def get_host_target() -> str:
     return f"{arch}-{os_name}"
 
 
+# manylinux floor used when a glibc-pinned Linux target doesn't specify one.
+# glibc 2.28 == manylinux_2_28 (RHEL 8 / Debian 10 era) — broad compatibility.
+DEFAULT_GLIBC = "2.28"
+
+
+def normalize_target(target: str) -> str:
+    """Pin glibc on Linux glibc targets so the wheel is portable and its
+    manylinux tag is truthful. Building against a specific glibc (Zig's
+    `gnu.X.Y` syntax) guarantees the binary needs no newer symbols than that
+    floor. musl and non-Linux targets are left untouched.
+    """
+    if "linux" in target and "gnu" in target and "gnu." not in target:
+        return f"{target}.{DEFAULT_GLIBC}"
+    return target
+
+
+def _glibc_from_target(target: str) -> str:
+    for part in target.split("-"):
+        if part.startswith("gnu."):
+            return part[len("gnu."):]
+    return DEFAULT_GLIBC
+
+
 def target_to_platform_tag(target: str) -> str:
     parts = target.split("-")
     arch = parts[0]
@@ -67,7 +90,10 @@ def target_to_platform_tag(target: str) -> str:
     else:
         if "musl" in target:
             return f"musllinux_1_2_{plat_arch}"
-        return f"manylinux_2_28_{plat_arch}"
+        # Derive the manylinux tag from the pinned glibc version so the tag
+        # reflects what the binary actually requires.
+        glibc_tag = _glibc_from_target(target).replace(".", "_")
+        return f"manylinux_{glibc_tag}_{plat_arch}"
 
 
 def python_build_options(config: ZigMaturinConfig, target: str) -> list[str]:
@@ -142,6 +168,7 @@ def build_project(
     os.makedirs(out, exist_ok=True)
 
     for target in targets:
+        target = normalize_target(target)
         optimize = "ReleaseSafe" if release else "Debug"
 
         print(f"Building for target: {target}")
