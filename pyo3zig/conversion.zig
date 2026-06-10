@@ -6,6 +6,7 @@ pub const ConversionError = error{
     PythonTypeError,
     PythonValueError,
     Overflow,
+    MemoryError,
     NotImplemented,
 };
 
@@ -117,7 +118,9 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
                     const c_str_opt = zm.PyUnicode_AsUTF8(obj);
                     if (c_str_opt) |c_str| {
                         const len = std.mem.len(c_str);
-                        return c_str[0..len];
+                        const copy = std.heap.c_allocator.alloc(u8, len) catch return error.MemoryError;
+                        @memcpy(copy, c_str[0..len]);
+                        return copy;
                     }
                     return error.PythonValueError;
                 }
@@ -127,7 +130,10 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
                     if (zm.PyBytes_AsStringAndSize(obj, &buf, &size) != 0) {
                         return error.PythonValueError;
                     }
-                    return buf[0..@as(usize, @intCast(size))];
+                    const len = @as(usize, @intCast(size));
+                    const copy = std.heap.c_allocator.alloc(u8, len) catch return error.MemoryError;
+                    @memcpy(copy, buf[0..len]);
+                    return copy;
                 }
                 return error.PythonTypeError;
             }

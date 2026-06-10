@@ -17,6 +17,7 @@ pub fn setConversionError(err: conversion.ConversionError) void {
         error.PythonTypeError => zm.PyErr_SetString(zm.PyExc_TypeError(), "type conversion error"),
         error.PythonValueError => zm.PyErr_SetString(zm.PyExc_ValueError(), "value conversion error"),
         error.Overflow => zm.PyErr_SetString(zm.PyExc_OverflowError(), "integer overflow"),
+        error.MemoryError => zm.PyErr_SetString(zm.PyExc_MemoryError(), "memory allocation failed"),
         error.NotImplemented => zm.PyErr_SetString(zm.PyExc_NotImplementedError(), "conversion not implemented"),
     }
 }
