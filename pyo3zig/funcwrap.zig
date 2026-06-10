@@ -52,10 +52,16 @@ fn wrapFnInner(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, _:
         const TupleType = paramTypesTupleDirect(params);
         var call_args: TupleType = undefined;
 
+        // Per-call arena: backs container-argument conversions and is freed
+        // when the trampoline returns (after the result has been converted).
+        var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
         inline for (params, 0..) |param, i| {
             const T = param.type.?;
             const arg_obj = zm.PyTuple_GetItem(args, @as(isize, @intCast(i)));
-            call_args[i] = conversion.fromPyObject(T, arg_obj) catch |err| {
+            call_args[i] = conversion.fromPyObject(T, arg_obj, alloc) catch |err| {
                 setConversionError(err);
                 return null;
             };
@@ -69,7 +75,7 @@ fn wrapFnInner(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, _:
             const ret_info = @typeInfo(ret);
             if (ret_info == .error_union) {
                 const result = @call(.auto, func, call_args) catch |err| {
-                    errors.setPyException(err);
+                    errors.setPyExceptionIfNeeded(err);
                     return null;
                 };
                 return returnToPyObjectValue(result);
@@ -138,51 +144,17 @@ pub fn pyFnKw(comptime name: [:0]const u8, comptime func: anytype, comptime spec
     const FnType = @TypeOf(func);
     const fn_info = @typeInfo(FnType).@"fn";
     const params = fn_info.params;
-    const arg_names = spec.args;
-    if (arg_names.len != params.len) {
+    if (spec.args.len != params.len) {
         @compileError("pyFnKw: .args length must match the function's parameter count");
     }
-    const has_defaults = @hasField(@TypeOf(spec), "defaults");
 
     const Wrapper = struct {
         const Ctx = struct { args: ?*zm.PyObject, kwargs: ?*zm.PyObject };
 
         fn inner(args_obj: ?*zm.PyObject, kwargs_obj: ?*zm.PyObject) ?*zm.PyObject {
-            const npos: isize = if (args_obj) |a| zm.PyTuple_Size(a) else 0;
-            if (npos > @as(isize, @intCast(params.len))) {
-                zm.PyErr_SetString(zm.PyExc_TypeError(), "too many positional arguments");
-                return null;
-            }
-
-            const TupleType = paramTypesTupleDirect(params);
-            var call_args: TupleType = undefined;
-
-            inline for (params, 0..) |param, i| {
-                const ParamT = param.type.?;
-                const pname = @as([*:0]const u8, @ptrCast(arg_names[i].ptr));
-                var arg_obj: ?*zm.PyObject = null;
-                if (i < npos) {
-                    arg_obj = zm.PyTuple_GetItem(args_obj, @as(isize, @intCast(i)));
-                } else if (kwargs_obj != null) {
-                    arg_obj = zm.PyDict_GetItemString(kwargs_obj, pname);
-                }
-
-                if (arg_obj) |o| {
-                    call_args[i] = conversion.fromPyObject(ParamT, o) catch |err| {
-                        setConversionError(err);
-                        return null;
-                    };
-                } else if (comptime has_defaults and @hasField(@TypeOf(spec.defaults), arg_names[i])) {
-                    call_args[i] = @field(spec.defaults, arg_names[i]);
-                } else {
-                    var buf: [128]u8 = std.mem.zeroes([128]u8);
-                    const msg = std.fmt.bufPrint(&buf, "missing required argument '{s}'", .{arg_names[i]}) catch "missing required argument";
-                    buf[@min(msg.len, buf.len - 1)] = 0;
-                    zm.PyErr_SetString(zm.PyExc_TypeError(), @ptrCast(&buf));
-                    return null;
-                }
-            }
-
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const call_args = bindArgs(params, spec, args_obj, kwargs_obj, arena.allocator()) orelse return null;
             return callAndConvert(func, fn_info, call_args);
         }
 
@@ -206,7 +178,55 @@ pub fn pyFnKw(comptime name: [:0]const u8, comptime func: anytype, comptime spec
     };
 }
 
-fn callAndConvert(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, call_args: anytype) ?*zm.PyObject {
+/// Bind Python positional + keyword arguments to a Zig call-args tuple, using
+/// the explicit names in `spec.args` and optional `spec.defaults`. Returns null
+/// with a Python exception set on error. Shared by pyFnKw, wrapMethodKw, and
+/// keyword __init__.
+pub fn bindArgs(
+    comptime params: []const std.builtin.Type.Fn.Param,
+    comptime spec: anytype,
+    args_obj: ?*zm.PyObject,
+    kwargs_obj: ?*zm.PyObject,
+    alloc: std.mem.Allocator,
+) ?paramTypesTupleDirect(params) {
+    const arg_names = spec.args;
+    const has_defaults = @hasField(@TypeOf(spec), "defaults");
+    const npos: isize = if (args_obj) |a| zm.PyTuple_Size(a) else 0;
+    if (npos > @as(isize, @intCast(params.len))) {
+        zm.PyErr_SetString(zm.PyExc_TypeError(), "too many positional arguments");
+        return null;
+    }
+
+    var call_args: paramTypesTupleDirect(params) = undefined;
+    inline for (params, 0..) |param, i| {
+        const ParamT = param.type.?;
+        const pname = @as([*:0]const u8, @ptrCast(arg_names[i].ptr));
+        var arg_obj: ?*zm.PyObject = null;
+        if (i < npos) {
+            arg_obj = zm.PyTuple_GetItem(args_obj, @as(isize, @intCast(i)));
+        } else if (kwargs_obj != null) {
+            arg_obj = zm.PyDict_GetItemString(kwargs_obj, pname);
+        }
+
+        if (arg_obj) |o| {
+            call_args[i] = conversion.fromPyObject(ParamT, o, alloc) catch |err| {
+                setConversionError(err);
+                return null;
+            };
+        } else if (comptime has_defaults and @hasField(@TypeOf(spec.defaults), arg_names[i])) {
+            call_args[i] = @field(spec.defaults, arg_names[i]);
+        } else {
+            var buf: [128]u8 = std.mem.zeroes([128]u8);
+            const msg = std.fmt.bufPrint(&buf, "missing required argument '{s}'", .{arg_names[i]}) catch "missing required argument";
+            buf[@min(msg.len, buf.len - 1)] = 0;
+            zm.PyErr_SetString(zm.PyExc_TypeError(), @ptrCast(&buf));
+            return null;
+        }
+    }
+    return call_args;
+}
+
+pub fn callAndConvert(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, call_args: anytype) ?*zm.PyObject {
     const return_type = fn_info.return_type;
     if (return_type) |ret| {
         if (ret == void) {
@@ -215,7 +235,7 @@ fn callAndConvert(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn,
         }
         if (@typeInfo(ret) == .error_union) {
             const result = @call(.auto, func, call_args) catch |err| {
-                errors.setPyException(err);
+                errors.setPyExceptionIfNeeded(err);
                 return null;
             };
             return returnToPyObjectValue(result);

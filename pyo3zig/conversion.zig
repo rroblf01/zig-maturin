@@ -120,7 +120,24 @@ fn structToDict(value: anytype) ConversionError!?*zm.PyObject {
     return dict;
 }
 
-pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
+/// Length of a Python sequence (list or tuple), or null if it is neither.
+fn seqLen(obj: ?*zm.PyObject) ?isize {
+    if (zm.PyList_Check(obj) != 0) return zm.PyList_Size(obj);
+    if (zm.PyTuple_Check(obj) != 0) return zm.PyTuple_Size(obj);
+    return null;
+}
+
+/// Borrowed item from a Python list/tuple at index i.
+fn seqItem(obj: ?*zm.PyObject, i: isize) ?*zm.PyObject {
+    if (zm.PyList_Check(obj) != 0) return zm.PyList_GetItem(obj, i);
+    return zm.PyTuple_GetItem(obj, i);
+}
+
+/// Convert a Python object to a Zig value. `allocator` backs container
+/// conversions (list -> []T, dict -> struct); pass a per-call arena so the
+/// result lives for the duration of the call and is freed afterwards. Scalar
+/// and borrowed conversions ignore it.
+pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.Allocator) ConversionError!T {
     // Raw object passthrough: borrow the argument as-is (valid for the call).
     if (T == ?*zm.PyObject) return obj;
     if (T == *zm.PyObject) {
@@ -177,31 +194,77 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
             if (obj == zm.Py_None()) {
                 return null;
             }
-            return try fromPyObject(info.child, obj);
+            return try fromPyObject(info.child, obj, allocator);
         },
         .pointer => |info| {
-            if (info.size == .slice and info.child == u8) {
-                // Borrow the underlying buffer — valid for the duration of the
-                // call (the argument tuple keeps the object alive). No copy, no
-                // free. Do NOT retain the slice past the call.
-                if (zm.PyUnicode_Check(obj) != 0) {
-                    const c_str_opt = zm.PyUnicode_AsUTF8(obj);
-                    if (c_str_opt) |c_str| {
-                        return std.mem.sliceTo(c_str, 0);
-                    }
-                    return error.PythonValueError;
-                }
-                if (zm.PyBytes_Check(obj) != 0) {
-                    var buf: [*]u8 = undefined;
-                    var size: isize = undefined;
-                    if (zm.PyBytes_AsStringAndSize(obj, &buf, &size) != 0) {
+            if (info.size == .slice) {
+                if (info.child == u8) {
+                    // Borrow the underlying buffer — valid for the duration of
+                    // the call (the argument keeps the object alive). No copy.
+                    if (zm.PyUnicode_Check(obj) != 0) {
+                        const c_str_opt = zm.PyUnicode_AsUTF8(obj);
+                        if (c_str_opt) |c_str| return std.mem.sliceTo(c_str, 0);
                         return error.PythonValueError;
                     }
-                    return buf[0..@as(usize, @intCast(size))];
+                    if (zm.PyBytes_Check(obj) != 0) {
+                        var buf: [*]u8 = undefined;
+                        var size: isize = undefined;
+                        if (zm.PyBytes_AsStringAndSize(obj, &buf, &size) != 0) {
+                            return error.PythonValueError;
+                        }
+                        return buf[0..@as(usize, @intCast(size))];
+                    }
+                    return error.PythonTypeError;
                 }
-                return error.PythonTypeError;
+                // list/tuple -> []child (allocated in the per-call arena).
+                const n = seqLen(obj) orelse return error.PythonTypeError;
+                const out = allocator.alloc(info.child, @as(usize, @intCast(n))) catch return error.MemoryError;
+                var i: isize = 0;
+                while (i < n) : (i += 1) {
+                    const item = seqItem(obj, i) orelse return error.PythonValueError;
+                    out[@as(usize, @intCast(i))] = try fromPyObject(info.child, item, allocator);
+                }
+                return out;
             }
             return error.NotImplemented;
+        },
+        .array => |info| {
+            const n = seqLen(obj) orelse return error.PythonTypeError;
+            if (n != info.len) return error.PythonValueError;
+            var out: T = undefined;
+            inline for (0..info.len) |i| {
+                const item = seqItem(obj, @as(isize, @intCast(i))) orelse return error.PythonValueError;
+                out[i] = try fromPyObject(info.child, item, allocator);
+            }
+            return out;
+        },
+        .@"struct" => |info| {
+            if (@hasDecl(T, "borrow")) return error.NotImplemented; // wrapper types not accepted as args
+            if (info.is_tuple) {
+                const n = seqLen(obj) orelse return error.PythonTypeError;
+                if (n != info.fields.len) return error.PythonValueError;
+                var out: T = undefined;
+                inline for (info.fields, 0..) |field, i| {
+                    const item = seqItem(obj, @as(isize, @intCast(i))) orelse return error.PythonValueError;
+                    @field(out, field.name) = try fromPyObject(field.type, item, allocator);
+                }
+                return out;
+            }
+            // dict -> struct keyed by field name; missing keys use struct defaults.
+            if (zm.PyDict_Check(obj) == 0) return error.PythonTypeError;
+            var out: T = undefined;
+            inline for (info.fields) |field| {
+                const key = @as([*:0]const u8, @ptrCast(field.name.ptr));
+                const item = zm.PyDict_GetItemString(obj, key);
+                if (item) |it| {
+                    @field(out, field.name) = try fromPyObject(field.type, it, allocator);
+                } else if (field.default_value_ptr) |dv| {
+                    @field(out, field.name) = @as(*const field.type, @ptrCast(@alignCast(dv))).*;
+                } else {
+                    return error.PythonValueError;
+                }
+            }
+            return out;
         },
         else => {
             @compileError("Cannot convert Python object to " ++ @typeName(T));

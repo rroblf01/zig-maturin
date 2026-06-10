@@ -1,165 +1,217 @@
 # zig-maturin
 
-**Build and publish Zig-powered Python extensions with native cross-compilation.**
+**Build and publish Zig-powered Python extensions — `pip install`, no compiler on the user's side.**
 
-`zig-maturin` is a tool that compiles Zig code into Python native extensions and packages them as `.whl` (wheel) files — ready for `pip install`. Think of it as [Maturin](https://github.com/PyO3/maturin) for Zig.
+`zig-maturin` is [Maturin](https://github.com/PyO3/maturin) + [PyO3](https://github.com/PyO3/pyo3) for Zig: a high-level Zig library (`pyo3zig`) for writing Python extensions, plus a CLI that compiles them into ready-to-install wheels.
 
-## Why Zig?
+```python
+import my_extension
+my_extension.add(2, 3)          # -> 5
+my_extension.greet("world")     # -> "Hello, world!"
+```
 
-| Feature | Rust + Maturin | Zig + zig-maturin |
+The extension author needs Zig. The end user just `pip install`s a wheel — no Zig, no compiler, nothing to build.
+
+## Why Zig
+
+| | Rust + Maturin | Zig + zig-maturin |
 |---|---|---|
-| Cross-compilation | Complex: needs external linkers, toolchains, or Docker | **Built-in**: `zig build -Dtarget=aarch64-macos` works out of the box |
-| Toolchain size | Gigabytes (rustc + LLVM) | A few megabytes (single Zig binary) |
-| C ABI | Via `#[no_mangle]` and `extern "C"` | Native: Zig compiles directly to C-compatible shared libraries |
+| Cross-compilation | needs Docker / extra toolchains | **built-in**: `--target aarch64-macos` works out of the box |
+| Toolchain size | gigabytes | a few megabytes |
+| Honest manylinux | via `auditwheel` | **glibc pinned at build** (`gnu.2.28`) → the tag is true |
+| C-API access | `unsafe extern` | native C interop |
 
-Zig's built-in cross-compilation lets you build wheels for **all platforms** from a single machine — no Docker, no extra toolchains, no linker setup.
-
-## Quick Start
+## Install
 
 ```bash
-# Install zig-maturin
-pip install zig-maturin
+pip install zig-maturin     # the build tool (pure Python)
+# you also need Zig 0.14+ on PATH (https://ziglang.org/download/)
+```
 
-# Scaffold a new project
+## Quick start
+
+```bash
 zig-maturin scaffold my_extension
 cd my_extension
-
-# Build and install in development mode
-zig-maturin develop
-
-# Test it
+zig-maturin develop                 # build + install into the current venv
 python -c "import my_extension; print(my_extension.hello())"
-# → Hello from Zig!
-
-# Build a wheel for distribution
-zig-maturin build
-# → dist/my_extension-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl
-
-# Cross-compile for other platforms (no extra setup needed!)
-zig-maturin build --target aarch64-macos --target x86_64-windows
-# → dist/my_extension-0.1.0-cp314-cp314-macosx_11_0_arm64.whl
-# → dist/my_extension-0.1.0-cp314-cp314-win_amd64.whl
+zig-maturin build                   # produce a wheel in dist/
 ```
 
-## How it Works
+## Writing an extension
 
-1. **Write Zig code** — use the `zig-maturin` Zig package to access the Python C-API
-2. **`zig-maturin build`** — compiles with `zig build` and packages the `.so` into a wheel
-3. **`zig-maturin develop`** — compiles and installs directly into the current Python environment
-4. **Cross-compile** — pass `--target <triple>` to build for any supported platform
-
-## Writing a Python Extension in Zig
-
-The `zig-maturin` Zig package provides low-level Python C-API bindings. Functions are exposed via the standard Python C extension pattern:
+A module is declared with `pyModule` and exported with `exportModule`:
 
 ```zig
-const zm = @import("zig-maturin");
+const std = @import("std");
+const pz = @import("pyo3zig");
 
-fn hello(self: ?*zm.PyObject, args: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
-    _ = self;
-    _ = args;
-    return zm.PyUnicode_FromString("Hello from Zig!");
+// Turn a Zig panic into a Python exception instead of crashing the interpreter.
+pub const panic = pz.panic;
+
+fn add(a: i64, b: i64) i64 {
+    return a + b;
 }
 
-pub export fn PyInit_my_extension() callconv(.c) ?*zm.PyObject {
-    const methods = [_]zm.PyMethodDef{
-        zm.method("hello", &hello, zm.METH_NOARGS, "Say hello"),
-        .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
-    };
-    var mod = zm.PyModuleDef{
-        .m_base = zm.PyModuleDef_HEAD_INIT,
-        .m_name = "my_extension",
-        .m_doc = "A Python module written in Zig",
-        .m_size = -1,
-        .m_methods = @as(?[*]zm.PyMethodDef, @ptrCast(@constCast(&methods))),
-        .m_slots = null,
-        .m_traverse = null,
-        .m_clear = null,
-        .m_free = null,
-    };
-    return zm.PyModule_Create(&mod);
+fn greet(name: []const u8) !pz.PyString {
+    var buf: [256]u8 = undefined;
+    return pz.PyString.init(try std.fmt.bufPrint(&buf, "Hello, {s}!", .{name}));
+}
+
+const Mod = pz.pyModule("my_extension", .{
+    .doc = "An extension written in Zig.",
+    .functions = &.{
+        pz.pyFnNamed("add", add),
+        pz.pyFnNamed("greet", greet),
+    },
+});
+
+comptime {
+    pz.exportModule(Mod);
 }
 ```
 
-> **Note**: The `zig-maturin` package exposes the raw Python C-API as Zig extern functions. A higher-level "PyO3 for Zig" layer is planned for future releases.
+Plain Zig functions are wrapped automatically: argument count, type conversion,
+and error handling are all derived from the signature. Returning `!T` makes a
+Zig error surface as a Python exception.
 
-## Available C-API Bindings
+### Type conversions
 
-The Zig package wraps a comprehensive subset of the Python C-API:
+| Zig | Python (argument) | Python (return) |
+|---|---|---|
+| `i8`..`i64`, `u8`..`u64` | `int` | `int` |
+| `f32`, `f64` | `float` | `float` |
+| `bool` | `bool` | `bool` |
+| `[]const u8` | `str` / `bytes` (borrowed) | `str` |
+| `?T` | `T` or `None` | `T` or `None` |
+| `[]T`, `[N]T` | — | `list` |
+| tuple struct | — | `tuple` |
+| plain struct | — | `dict` (by field name) |
+| `?*pz.PyObject` | any object | any object (passthrough) |
 
-| Category | Functions |
+Container **arguments** (`list` → `[]T`) are on the roadmap; accept `?*pz.PyObject`
+for now and convert manually.
+
+### Keyword arguments and defaults
+
+Zig reflection doesn't expose parameter names, so declare them explicitly:
+
+```zig
+fn power(base: i64, exp: i64) i64 { ... }
+
+pz.pyFnKw("power", power, .{
+    .args = &.{ "base", "exp" },
+    .defaults = .{ .exp = @as(i64, 2) },   // optional, by name
+});
+```
+
+```python
+power(3)               # 9   (exp defaults to 2)
+power(2, 10)           # 1024
+power(base=5, exp=3)   # 125
+```
+
+### Classes
+
+A Zig `extern struct` becomes a Python class. Fields are exposed as attributes;
+declare optional dunder methods directly on the struct:
+
+```zig
+const Greeter = extern struct {
+    val: i64,
+
+    pub fn init(v: i64) Greeter {
+        return .{ .val = v };
+    }
+    pub fn __str__(self: *Greeter) !pz.PyString { ... }
+    pub fn __hash__(self: *Greeter) i64 { return self.val; }
+    pub fn __eq__(self: *Greeter, other: *Greeter) bool { return self.val == other.val; }
+    pub fn __deinit__(self: *Greeter) void { ... }   // called on GC
+};
+
+fn greet_method(self: *Greeter) !pz.PyString { ... }
+
+const GreeterClass = pz.PyClass(Greeter, .{
+    .methods = &.{ pz.wrapMethodNamed(Greeter, "greet", greet_method) },
+    .readonly = &.{"val"},   // expose `val` read-only
+});
+```
+
+Register the class in the module's `.classes` field. Supported hooks: `init`,
+`__deinit__`, `__str__`, `__repr__`, `__hash__`, `__eq__`.
+
+### Error handling and panics
+
+- A Zig **error** (`!T`) becomes a Python exception (mapped by kind: `error.Overflow`
+  → `OverflowError`, etc.).
+- A Zig **panic** (out-of-bounds, `@panic`, integer overflow in safe builds) would
+  normally abort the whole interpreter. Opt into the safety net with
+  `pub const panic = pz.panic;` and it becomes a `RuntimeError` instead — the
+  interpreter stays alive. (Caveat: the recovery skips `defer`s between the panic
+  site and the call boundary, so that window leaks.)
+
+### Type stubs (`.pyi`)
+
+Type hints are generated **at compile time** from your Zig signatures:
+
+```zig
+const STUB = pz.moduleStub(.{
+    .{ .name = "add", .func = add, .args = &.{ "a", "b" } },
+    .{ .name = "greet", .func = greet, .args = &.{"name"} },
+});
+fn __pyi__() []const u8 { return STUB; }
+// register pz.pyFnNamed("__pyi__", __pyi__)
+```
+
+`zig-maturin build` calls `__pyi__()` on native builds and ships the resulting
+`my_extension.pyi` inside the wheel, so type checkers see your signatures.
+
+## CLI
+
+| Command | Description |
 |---|---|
-| **Module** | `PyModule_Create`, `PyModule_New`, `PyModule_AddObject`, `PyModule_AddIntConstant`, `PyModule_AddStringConstant` |
-| **Ref counting** | `Py_INCREF`, `Py_DECREF`, `Py_XINCREF`, `Py_XDECREF`, `Py_NewRef`, `Py_IncRef`, `Py_DecRef` |
-| **Strings** | `PyUnicode_FromString`, `PyUnicode_FromStringAndSize`, `PyUnicode_AsUTF8`, `PyUnicode_Check` |
-| **Integers** | `PyLong_FromLong`, `PyLong_FromLongLong`, `PyLong_FromUnsignedLongLong`, `PyLong_AsLong`, `PyLong_AsLongLong`, `PyLong_Check` |
-| **Floats** | `PyFloat_FromDouble`, `PyFloat_AsDouble`, `PyFloat_Check` |
-| **Booleans** | `PyBool_FromLong`, `PyBool_Check` |
-| **Exceptions** | `PyErr_SetString`, `PyErr_SetObject`, `PyErr_Occurred`, `PyErr_Clear` |
-| **Objects** | `PyObject_GetAttrString`, `PyObject_SetAttrString`, `PyObject_CallObject`, `PyObject_Str`, `PyObject_IsTrue` |
-| **Args** | `PyArg_ParseTuple`, `Py_BuildValue` |
-| **Lists** | `PyList_New`, `PyList_Size`, `PyList_GetItem`, `PyList_SetItem`, `PyList_Append`, `PyList_Check` |
-| **Dicts** | `PyDict_New`, `PyDict_SetItemString`, `PyDict_GetItemString`, `PyDict_Size`, `PyDict_Check` |
-| **Tuples** | `PyTuple_New`, `PyTuple_Size`, `PyTuple_GetItem`, `PyTuple_SetItem` |
+| `zig-maturin scaffold <name>` | Create a new project (pyproject, build.zig, src/main.zig). |
+| `zig-maturin develop` | Build and install into the current environment. |
+| `zig-maturin build` | Build a wheel in `dist/`. |
+| `zig-maturin sdist` | Build a source distribution. |
 
-## Commands
+`build` / `develop` options: `--target <triple>` (repeatable), `--release`,
+`--out <dir>`, and for cross-compilation `--python-include` / `--python-libdir`
+/ `--python-lib`.
 
-### `zig-maturin scaffold <name>`
+## Cross-compilation
 
-Creates a new project with:
-- `pyproject.toml` — Python project configuration
-- `build.zig` / `build.zig.zon` — Zig build configuration with `zig-maturin` dependency
-- `src/main.zig` — Template module with a hello function
+Zig cross-compiles out of the box. Linux glibc targets are pinned so the
+manylinux tag is honest:
 
-### `zig-maturin build`
+```bash
+zig-maturin build --target x86_64-linux-gnu --target aarch64-macos
+# -> manylinux_2_28_x86_64, macosx_11_0_arm64
+```
 
-Builds the extension and creates a `.whl` file.
+| Zig target | Wheel tag |
+|---|---|
+| `x86_64-linux-gnu` (→ `gnu.2.28`) | `manylinux_2_28_x86_64` |
+| `aarch64-linux-gnu` | `manylinux_2_28_aarch64` |
+| `x86_64-linux-musl` | `musllinux_1_2_x86_64` |
+| `aarch64-macos` / `x86_64-macos` | `macosx_11_0_arm64` / `_x86_64` |
+| `x86_64-windows` / `aarch64-windows` | `win_amd64` / `win_arm64` |
 
-- `--target <triple>` — cross-compile target (can be specified multiple times for multi-platform builds)
-- `--release` — build in release mode
-- `--out <dir>` — output directory (default: `dist`)
-
-### `zig-maturin develop`
-
-Builds the extension and installs it into the current Python environment's `site-packages`.
-
-- `--target <triple>` — cross-compilation target (default: host native)
-- `--release` — build in release mode
+Cross-compiling needs the **target** Python's headers (and, on Windows, its
+`pythonXY.lib`); supply them via `--python-include` / `--python-libdir` /
+`--python-lib` or `[tool.zig-maturin]`. Native builds detect them via
+`sysconfig` automatically.
 
 ## Configuration
 
-`zig-maturin` reads `[tool.zig-maturin]` from `pyproject.toml`:
-
 ```toml
 [tool.zig-maturin]
-module-name = "my_extension"      # Python module name (default: project name)
-zig-source = "src/main.zig"       # Path to Zig source file
-```
-
-## Cross-Compilation Targets
-
-`zig-maturin` maps Zig targets to Python wheel platform tags:
-
-| Zig Target | Wheel Tag |
-|---|---|
-| `x86_64-linux-gnu` | `manylinux_2_28_x86_64` |
-| `aarch64-linux-gnu` | `manylinux_2_28_aarch64` |
-| `x86_64-linux-musl` | `musllinux_1_2_x86_64` |
-| `aarch64-macos` | `macosx_11_0_arm64` |
-| `x86_64-macos` | `macosx_11_0_x86_64` |
-| `x86_64-windows` | `win_amd64` |
-| `aarch64-windows` | `win_arm64` |
-
-## Project Structure
-
-```
-my_extension/
-├── pyproject.toml       # Python project config with [tool.zig-maturin]
-├── build.zig            # Zig build file
-├── build.zig.zon        # Zig package manifest
-├── src/
-│   └── main.zig         # Your Zig extension code
-└── dist/                # Built wheels (after zig-maturin build)
+module-name = "my_extension"     # default: project name
+zig-source  = "src/main.zig"
+# cross-compilation overrides (optional):
+# python-include = "..."
+# python-libdir  = "..."
+# python-lib     = "python312"
 ```
 
 ## Requirements
@@ -172,8 +224,7 @@ my_extension/
 
 MIT — [Ricardo Robles Fernández](https://github.com/rroblf01)
 
-## Related Projects
+## Related
 
-- [Maturin](https://github.com/PyO3/maturin) — Build and publish Rust-powered Python extensions
-- [PyO3](https://github.com/PyO3/pyo3) — Rust bindings for Python
+- [Maturin](https://github.com/PyO3/maturin), [PyO3](https://github.com/PyO3/pyo3) — the Rust originals
 - [zig-python](https://github.com/dzfranklin/zig-python) — Python C-API bindings for Zig

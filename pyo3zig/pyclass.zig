@@ -21,7 +21,7 @@ fn callFuncReturningPyObject(comptime func: anytype, comptime fn_info: std.built
         const ret_info = @typeInfo(ret);
         if (ret_info == .error_union) {
             const result = @call(.auto, func, args) catch |err| {
-                errors.setPyException(err);
+                errors.setPyExceptionIfNeeded(err);
                 return null;
             };
             return funcwrap.returnToPyObjectValue(result);
@@ -62,10 +62,14 @@ pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime f
                 const TupleType = funcwrap.paramTypesTupleDirect(method_params);
                 var call_args: TupleType = undefined;
 
+                var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+                defer arena.deinit();
+                const alloc = arena.allocator();
+
                 inline for (method_params, 0..) |param, i| {
                     const ParamT = param.type.?;
                     const arg_obj = zm.PyTuple_GetItem(args, @as(isize, @intCast(i)));
-                    call_args[i] = conversion.fromPyObject(ParamT, arg_obj) catch |err| {
+                    call_args[i] = conversion.fromPyObject(ParamT, arg_obj, alloc) catch |err| {
                         funcwrap.setConversionError(err);
                         return null;
                     };
@@ -79,7 +83,7 @@ pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime f
                     const ret_info = @typeInfo(ret);
                     if (ret_info == .error_union) {
                         const result = @call(.auto, func, .{self_ptr} ++ call_args) catch |err| {
-                            errors.setPyException(err);
+                            errors.setPyExceptionIfNeeded(err);
                             return null;
                         };
                         return funcwrap.returnToPyObjectValue(result);
@@ -105,11 +109,62 @@ pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime f
     };
 }
 
+/// Like wrapMethodNamed but with keyword-argument and default support.
+/// `spec.args` names the method's parameters (excluding `self`).
+pub fn wrapMethodKw(comptime T: type, comptime name: [:0]const u8, comptime func: anytype, comptime spec: anytype) zm.PyMethodDef {
+    const fn_info = @typeInfo(@TypeOf(func)).@"fn";
+    const method_params = fn_info.params[1..];
+    if (spec.args.len != method_params.len) {
+        @compileError("wrapMethodKw: .args length must match the method's parameter count (excluding self)");
+    }
+    const Cell = pycell.PyCell(T);
+
+    const Wrapper = struct {
+        const Ctx = struct { self: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject };
+
+        fn inner(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const self_ptr = Cell.ptrFromObj(self_obj);
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const ca = funcwrap.bindArgs(method_params, spec, args_obj, kwargs_obj, arena.allocator()) orelse return null;
+            return funcwrap.callAndConvert(func, fn_info, .{self_ptr} ++ ca);
+        }
+
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.args, c.kwargs);
+        }
+
+        pub fn trampoline(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .self = self_obj, .args = args_obj, .kwargs = kwargs_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+
+    return zm.PyMethodDef{
+        .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
+        .ml_meth = @ptrCast(&Wrapper.trampoline),
+        .ml_flags = zm.METH_VARARGS | zm.METH_KEYWORDS,
+        .ml_doc = null,
+    };
+}
+
 pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const Cell = pycell.PyCell(T);
     const type_name = buildTypeName(T);
     const has_methods = @hasField(@TypeOf(config), "methods");
     const has_readonly = @hasField(@TypeOf(config), "readonly");
+    // Optional keyword-argument support for __init__: declare parameter names
+    // (and optional defaults) on the class config.
+    const has_init_args = @hasField(@TypeOf(config), "init_args");
+    const has_init_defaults = @hasField(@TypeOf(config), "init_defaults");
+    const init_spec = if (has_init_args)
+        (if (has_init_defaults)
+            .{ .args = config.init_args, .defaults = config.init_defaults }
+        else
+            .{ .args = config.init_args })
+    else
+        .{};
     const has_str = @hasDecl(T, "__str__");
     const has_repr = @hasDecl(T, "__repr__");
     const has_hash = @hasDecl(T, "__hash__");
@@ -134,11 +189,9 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
 
     const NewWrapper = struct {
         fn new(ty: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
-            if (kwargs != null) {
-                if (zm.PyDict_Size(kwargs) > 0) {
-                    zm.PyErr_SetString(zm.PyExc_TypeError(), "keyword arguments not supported for init");
-                    return null;
-                }
+            if (!has_init_args and kwargs != null and zm.PyDict_Size(kwargs) > 0) {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "keyword arguments not supported for init");
+                return null;
             }
             const alloc = zm.PyMem_RawMalloc(Cell.allocSize());
             if (alloc == null) {
@@ -155,44 +208,50 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (@hasDecl(T, "init")) {
                 const ptr = Cell.ptrFromObj(obj);
                 const init_fn = T.init;
-                const InitFnType = @TypeOf(init_fn);
-                const fn_info = @typeInfo(InitFnType).@"fn";
+                const fn_info = @typeInfo(@TypeOf(init_fn)).@"fn";
                 const params = fn_info.params;
 
-                if (args) |a| {
-                    const actual = zm.PyTuple_Size(a);
-                    const expected = @as(isize, @intCast(params.len));
-                    if (actual != expected) {
-                        zm.PyErr_SetString(zm.PyExc_TypeError(), "wrong number of arguments for init");
-                        zm.PyMem_RawFree(alloc);
-                        return null;
-                    }
+                var arg_arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+                defer arg_arena.deinit();
+                const arg_alloc = arg_arena.allocator();
 
-                    const TupleType = funcwrap.paramTypesTupleDirect(params);
-                    var init_args: TupleType = undefined;
-
-                    inline for (params, 0..) |param, i| {
-                        const ParamT = param.type.?;
-                        const arg_obj = zm.PyTuple_GetItem(a, @as(isize, @intCast(i)));
-                        init_args[i] = conversion.fromPyObject(ParamT, arg_obj) catch {
-                            zm.PyErr_SetString(zm.PyExc_TypeError(), "init argument conversion failed");
-                            zm.PyMem_RawFree(alloc);
-                            return null;
-                        };
-                    }
-
-                    const InitReturn = @typeInfo(@TypeOf(init_fn)).@"fn".return_type orelse void;
-                    if (InitReturn == void) {
-                        @call(.auto, init_fn, init_args);
-                    } else if (@typeInfo(InitReturn) == .error_union) {
-                        ptr.* = @call(.auto, init_fn, init_args) catch |err| {
-                            errors.setPyException(err);
+                const init_args = blk: {
+                    if (has_init_args) {
+                        break :blk funcwrap.bindArgs(params, init_spec, args, kwargs, arg_alloc) orelse {
                             zm.PyMem_RawFree(alloc);
                             return null;
                         };
                     } else {
-                        ptr.* = @call(.auto, init_fn, init_args);
+                        const actual: isize = if (args) |a| zm.PyTuple_Size(a) else 0;
+                        if (actual != @as(isize, @intCast(params.len))) {
+                            zm.PyErr_SetString(zm.PyExc_TypeError(), "wrong number of arguments for init");
+                            zm.PyMem_RawFree(alloc);
+                            return null;
+                        }
+                        var ia: funcwrap.paramTypesTupleDirect(params) = undefined;
+                        inline for (params, 0..) |param, i| {
+                            const arg_obj = zm.PyTuple_GetItem(args, @as(isize, @intCast(i)));
+                            ia[i] = conversion.fromPyObject(param.type.?, arg_obj, arg_alloc) catch {
+                                zm.PyErr_SetString(zm.PyExc_TypeError(), "init argument conversion failed");
+                                zm.PyMem_RawFree(alloc);
+                                return null;
+                            };
+                        }
+                        break :blk ia;
                     }
+                };
+
+                const InitReturn = fn_info.return_type orelse void;
+                if (InitReturn == void) {
+                    @call(.auto, init_fn, init_args);
+                } else if (@typeInfo(InitReturn) == .error_union) {
+                    ptr.* = @call(.auto, init_fn, init_args) catch |err| {
+                        errors.setPyExceptionIfNeeded(err);
+                        zm.PyMem_RawFree(alloc);
+                        return null;
+                    };
+                } else {
+                    ptr.* = @call(.auto, init_fn, init_args);
                 }
             }
 
@@ -277,7 +336,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     }
                     fn setter(obj: ?*zm.PyObject, val: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) c_int {
                         const ptr = Cell.ptrFromObj(obj);
-                        const converted = conversion.fromPyObject(field.type, val) catch {
+                        // Fields are stored permanently, so a per-call arena
+                        // would dangle; scalars don't allocate. Container-typed
+                        // settable fields are not supported.
+                        const converted = conversion.fromPyObject(field.type, val, std.heap.c_allocator) catch {
                             zm.PyErr_SetString(zm.PyExc_TypeError(), "type mismatch for field");
                             return -1;
                         };

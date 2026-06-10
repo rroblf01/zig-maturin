@@ -57,6 +57,27 @@ except Exception as e:
 # interpreter still usable after panics
 check("alive after panic", m.add(2, 3) == 5)
 
+# test_container_args
+check("sum_list(list)", m.sum_list([1, 2, 3, 4]) == 10)
+check("sum_list(tuple)", m.sum_list((10, 20)) == 30)
+check("sum_list(empty)", m.sum_list([]) == 0)
+check("point_sum(dict)", m.point_sum({"x": 3, "y": 4}) == 7)
+try:
+    m.sum_list([1, "x", 3])
+    check("sum_list bad elem", False, "no exception")
+except TypeError:
+    check("sum_list bad elem", True)
+
+# test_typed_exceptions
+check("parse_positive(5)", m.parse_positive(5) == 5)
+try:
+    m.parse_positive(-3)
+    check("parse_positive raises ValueError", False, "no exception")
+except ValueError as e:
+    check("parse_positive raises ValueError", str(e) == "value must be positive", str(e))
+except Exception as e:
+    check("parse_positive raises ValueError", False, f"wrong type {type(e).__name__}")
+
 # test_kwargs_and_defaults
 check("power default exp", m.power(3) == 9)
 check("power positional", m.power(2, 10) == 1024)

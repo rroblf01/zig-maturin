@@ -27,6 +27,27 @@ fn make_array() [3]i64 {
     return .{ 10, 20, 30 };
 }
 
+// Container arguments: Python list -> []const i64, dict -> struct.
+fn sum_list(xs: []const i64) i64 {
+    var total: i64 = 0;
+    for (xs) |x| total += x;
+    return total;
+}
+
+fn point_sum(p: struct { x: i64, y: i64 }) i64 {
+    return p.x + p.y;
+}
+
+// Custom/typed exceptions: raise a specific Python exception with a message.
+// The framework preserves it instead of mapping the Zig error generically.
+fn parse_positive(x: i64) !i64 {
+    if (x <= 0) {
+        pz.setError(pz.PyExc_ValueError(), "value must be positive");
+        return error.NotPositive;
+    }
+    return x;
+}
+
 // kwargs + defaults: power(base, exp=2) -> base**exp
 fn power(base: i64, exp: i64) i64 {
     var result: i64 = 1;
@@ -95,6 +116,31 @@ const Greeter = extern struct {
     }
 };
 
+// Class with keyword __init__ (with a default) and a keyword method.
+const Vec2 = extern struct {
+    x: i64,
+    y: i64,
+
+    pub fn init(x: i64, y: i64) Vec2 {
+        return .{ .x = x, .y = y };
+    }
+};
+
+fn vec2_dot(self: *Vec2, other_x: i64, other_y: i64) i64 {
+    return self.x * other_x + self.y * other_y;
+}
+
+const Vec2Class = pz.PyClass(Vec2, .{
+    .init_args = &.{ "x", "y" },
+    .init_defaults = .{ .y = @as(i64, 0) },
+    .methods = &[_]pz.PyMethodDef{
+        pz.wrapMethodKw(Vec2, "dot", vec2_dot, .{
+            .args = &.{ "other_x", "other_y" },
+            .defaults = .{ .other_y = @as(i64, 0) },
+        }),
+    },
+});
+
 fn greet_method(self: *Greeter) !pz.PyString {
     var buf: [256]u8 = undefined;
     const s = try std.fmt.bufPrint(&buf, "Hello, val={d}!", .{self.val});
@@ -130,6 +176,8 @@ const STUB = pz.moduleStub(.{
     .{ .name = "make_array", .func = make_array },
     .{ .name = "make_point", .func = make_point },
     .{ .name = "make_pair", .func = make_pair },
+    .{ .name = "sum_list", .func = sum_list, .args = &.{"xs"} },
+    .{ .name = "point_sum", .func = point_sum, .args = &.{"p"} },
     .{ .name = "power", .func = power, .args = &.{ "base", "exp" } },
 });
 
@@ -147,6 +195,9 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("make_array", make_array),
         pz.pyFnNamed("make_point", make_point),
         pz.pyFnNamed("make_pair", make_pair),
+        pz.pyFnNamed("sum_list", sum_list),
+        pz.pyFnNamed("point_sum", point_sum),
+        pz.pyFnNamed("parse_positive", parse_positive),
         pz.pyFnNamed("boom", boom),
         pz.pyFnNamed("oob", oob),
         pz.pyFnKw("power", power, .{
@@ -158,7 +209,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("repeat_bytes", repeat_bytes),
         pz.pyFnNamed("get_deinit_count", get_deinit_count),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class },
 });
 
 comptime {

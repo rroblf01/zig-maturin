@@ -29,6 +29,7 @@ pub const pyFnKw = funcwrap.pyFnKw;
 pub const wrap = funcwrap.wrap;
 pub const wrapNamed = funcwrap.wrapNamed;
 pub const wrapMethodNamed = pyclass.wrapMethodNamed;
+pub const wrapMethodKw = pyclass.wrapMethodKw;
 
 pub const PyString = types.PyString;
 pub const PyInt = types.PyInt;
@@ -38,6 +39,16 @@ pub const PyList = types.PyList;
 pub const PyDict = types.PyDict;
 pub const PyTuple = types.PyTuple;
 pub const PyBytes = types.PyBytes;
+
+pub const setError = errors.setError;
+pub const newException = errors.newException;
+pub const PyExc_ValueError = zm.PyExc_ValueError;
+pub const PyExc_TypeError = zm.PyExc_TypeError;
+pub const PyExc_KeyError = zm.PyExc_KeyError;
+pub const PyExc_IndexError = zm.PyExc_IndexError;
+pub const PyExc_RuntimeError = zm.PyExc_RuntimeError;
+pub const PyExc_OverflowError = zm.PyExc_OverflowError;
+pub const PyExc_ZeroDivisionError = zm.PyExc_ZeroDivisionError;
 
 pub const GILGuard = gil.GILGuard;
 pub const PyObjectRef = refcount.PyObjectRef;

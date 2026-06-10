@@ -87,6 +87,7 @@ pub const PyTuple_New = pycall.PyTuple_New;
 pub const PyTuple_Size = pycall.PyTuple_Size;
 pub const PyTuple_GetItem = pycall.PyTuple_GetItem;
 pub const PyTuple_SetItem = pycall.PyTuple_SetItem;
+pub const PyTuple_Check = pycall.PyTuple_Check;
 
 pub const PyExc_Exception = pycall.PyExc_Exception;
 pub const PyExc_ValueError = pycall.PyExc_ValueError;
