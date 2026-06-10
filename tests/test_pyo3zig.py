@@ -103,10 +103,30 @@ try:
 except AttributeError:
     check("length_sq read-only", True)
 
+# test_operators (number protocol)
+va, vb = m.Vec2(1, 2), m.Vec2(3, 4)
+vs = va + vb
+check("Vec2 __add__", vs.x == 4 and vs.y == 6)
+vd = m.Vec2(5, 5) - m.Vec2(1, 2)
+check("Vec2 __sub__", vd.x == 4 and vd.y == 3)
+check("Vec2 __mul__ (dot)", va * vb == 11)
+vn = -va
+check("Vec2 __neg__", vn.x == -1 and vn.y == -2)
+check("Vec2 __bool__ true", bool(m.Vec2(1, 0)) is True)
+check("Vec2 __bool__ false", bool(m.Vec2(0, 0)) is False)
+try:
+    _ = va + 5
+    check("Vec2 + int rejected", False, "no exception")
+except TypeError:
+    check("Vec2 + int rejected", True)
+check("Vec2 __doc__", m.Vec2.__doc__ == "A 2D integer vector with arithmetic operators.")
+
 # test_protocols
 r = m.Range(0, 5)
 check("len(Range)", len(r) == 5)
 check("Range[2]", r[2] == 2)
+check("Range[-1] negative index", r[-1] == 4)
+check("Range[-2] negative index", r[-2] == 3)
 check("3 in Range", (3 in r) is True)
 check("10 not in Range", (10 in r) is False)
 check("list(Range)", list(m.Range(0, 3)) == [0, 1, 2])

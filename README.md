@@ -143,14 +143,19 @@ const GreeterClass = pz.PyClass(Greeter, .{
 Register the class in the module's `.classes` field.
 
 **Hooks** (declared on the struct): `init`, `__deinit__` (called on GC),
-`__str__`, `__repr__`, `__hash__`, `__eq__`, and the container/iterator
-protocols `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__iter__`,
-`__next__` (a type with `__next__` is automatically its own iterator).
+`__str__`, `__repr__`, `__hash__`, `__eq__`; the container/iterator protocols
+`__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__iter__`, `__next__`
+(a type with `__next__` is automatically its own iterator; `__getitem__`
+normalizes negative indices when `__len__` is present); and the arithmetic
+operators `__add__`, `__sub__`, `__mul__`, `__neg__`, `__bool__`. Binary
+operators take two operands of the same type (mixed types yield
+`NotImplemented`); a result of type `Self` is wrapped into a new instance.
 
 **`PyClass` config:**
 
 ```zig
 const Vec2Class = pz.PyClass(Vec2, .{
+    .doc = "A 2D vector.",   // class docstring (help(Vec2))
     // keyword __init__ with defaults
     .init_args     = &.{ "x", "y" },
     .init_defaults = .{ .y = @as(i64, 0) },

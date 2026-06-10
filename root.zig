@@ -164,6 +164,12 @@ pub const Py_sq_length = pytypes.Py_sq_length;
 pub const Py_sq_contains = pytypes.Py_sq_contains;
 pub const Py_mp_subscript = pytypes.Py_mp_subscript;
 pub const Py_mp_ass_subscript = pytypes.Py_mp_ass_subscript;
+pub const Py_tp_doc = pytypes.Py_tp_doc;
+pub const Py_nb_add = pytypes.Py_nb_add;
+pub const Py_nb_subtract = pytypes.Py_nb_subtract;
+pub const Py_nb_multiply = pytypes.Py_nb_multiply;
+pub const Py_nb_negative = pytypes.Py_nb_negative;
+pub const Py_nb_bool = pytypes.Py_nb_bool;
 pub const Py_TPFLAGS_DEFAULT = pytypes.Py_TPFLAGS_DEFAULT;
 pub const Py_TPFLAGS_HEAPTYPE = pytypes.Py_TPFLAGS_HEAPTYPE;
 

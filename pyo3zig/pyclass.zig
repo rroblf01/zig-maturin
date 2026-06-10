@@ -278,6 +278,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_contains = @hasDecl(T, "__contains__");
     const has_next = @hasDecl(T, "__next__");
     const has_iter = @hasDecl(T, "__iter__") or has_next;
+    const has_add = @hasDecl(T, "__add__");
+    const has_sub = @hasDecl(T, "__sub__");
+    const has_mul = @hasDecl(T, "__mul__");
+    const has_neg = @hasDecl(T, "__neg__");
+    const has_bool = @hasDecl(T, "__bool__");
+    const has_doc = @hasField(@TypeOf(config), "doc");
 
     const DeallocWrapper = struct {
         fn dealloc(obj: ?*zm.PyObject) callconv(.c) void {
@@ -477,12 +483,18 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         fn inner(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject) ?*zm.PyObject {
             const ptr = Cell.ptrFromObj(self_obj);
             const fn_info = @typeInfo(@TypeOf(T.__getitem__)).@"fn";
+            const KeyT = fn_info.params[1].type.?;
             var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
             defer arena.deinit();
-            const key = conversion.fromPyObject(fn_info.params[1].type.?, key_obj, arena.allocator()) catch |err| {
+            var key = conversion.fromPyObject(KeyT, key_obj, arena.allocator()) catch |err| {
                 funcwrap.setConversionError(err);
                 return null;
             };
+            // Python sequence semantics: a negative integer index counts from
+            // the end. Normalize it when the class also defines __len__.
+            if (has_len and @typeInfo(KeyT) == .int) {
+                if (key < 0) key += @as(KeyT, @intCast(T.__len__(ptr)));
+            }
             return callFuncReturningPyObject(T.__getitem__, fn_info, .{ ptr, key });
         }
         fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
@@ -595,6 +607,115 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
         fn iter(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
             return zm.pz_guard(&thunk, @ptrCast(self_obj));
+        }
+    };
+
+    // Number-protocol operators (__add__/__sub__/__mul__/__neg__). Binary ops
+    // accept two operands of this exact type; mixed-type operands yield
+    // NotImplemented (so Python raises TypeError or tries the reflected op). A
+    // result of type T is wrapped into a new instance; any other type is
+    // converted normally (e.g. a dot product returning i64).
+    const NumberWrapper = struct {
+        fn build(cls: ?*zm.PyObject, result: T) ?*zm.PyObject {
+            const alloc = zm.PyMem_RawMalloc(Cell.allocSize());
+            if (alloc == null) {
+                zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
+                return null;
+            }
+            const obj = @as(?*zm.PyObject, @ptrCast(@alignCast(alloc)));
+            const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(alloc)));
+            header.ob_refcnt = 1;
+            header.ob_type = @as(?*anyopaque, @ptrCast(cls));
+            zm.Py_XINCREF(cls);
+            Cell.ptrFromObj(obj).* = result;
+            return obj;
+        }
+        fn convertResult(cls: ?*zm.PyObject, result: anytype) ?*zm.PyObject {
+            if (@TypeOf(result) == T) return build(cls, result);
+            return funcwrap.returnToPyObjectValue(result);
+        }
+        fn callBinary(comptime func: anytype, a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const hdr_a = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(a_obj)));
+            const hdr_b = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(b_obj)));
+            if (hdr_a.ob_type != hdr_b.ob_type) return zm.Py_NewRef(zm.Py_NotImplemented());
+            const cls = @as(?*zm.PyObject, @ptrCast(@alignCast(hdr_a.ob_type)));
+            const a = Cell.ptrFromObj(a_obj);
+            const b = Cell.ptrFromObj(b_obj);
+            const RetT = @typeInfo(@TypeOf(func)).@"fn".return_type.?;
+            if (@typeInfo(RetT) == .error_union) {
+                const r = func(a, b) catch |e| {
+                    errors.setPyExceptionIfNeeded(e);
+                    return null;
+                };
+                return convertResult(cls, r);
+            }
+            return convertResult(cls, func(a, b));
+        }
+        fn callUnary(comptime func: anytype, self_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const hdr = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(self_obj)));
+            const cls = @as(?*zm.PyObject, @ptrCast(@alignCast(hdr.ob_type)));
+            const ptr = Cell.ptrFromObj(self_obj);
+            const RetT = @typeInfo(@TypeOf(func)).@"fn".return_type.?;
+            if (@typeInfo(RetT) == .error_union) {
+                const r = func(ptr) catch |e| {
+                    errors.setPyExceptionIfNeeded(e);
+                    return null;
+                };
+                return convertResult(cls, r);
+            }
+            return convertResult(cls, func(ptr));
+        }
+    };
+
+    const BinCtx = struct { a: ?*zm.PyObject, b: ?*zm.PyObject };
+    const AddWrapper = struct {
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*BinCtx, @ptrCast(@alignCast(p)));
+            return NumberWrapper.callBinary(T.__add__, c.a, c.b);
+        }
+        fn op(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = BinCtx{ .a = a_obj, .b = b_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+    const SubWrapper = struct {
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*BinCtx, @ptrCast(@alignCast(p)));
+            return NumberWrapper.callBinary(T.__sub__, c.a, c.b);
+        }
+        fn op(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = BinCtx{ .a = a_obj, .b = b_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+    const MulWrapper = struct {
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*BinCtx, @ptrCast(@alignCast(p)));
+            return NumberWrapper.callBinary(T.__mul__, c.a, c.b);
+        }
+        fn op(a_obj: ?*zm.PyObject, b_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = BinCtx{ .a = a_obj, .b = b_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+    const NegWrapper = struct {
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return NumberWrapper.callUnary(T.__neg__, @as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn op(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
+        }
+    };
+    const BoolWrapper = struct {
+        fn inner(self_obj: ?*zm.PyObject) c_int {
+            const ptr = Cell.ptrFromObj(self_obj);
+            return if (T.__bool__(ptr)) 1 else 0;
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) c_int {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn op(self_obj: ?*zm.PyObject) callconv(.c) c_int {
+            return zm.pz_guard_int(&thunk, @ptrCast(self_obj));
         }
     };
 
@@ -731,6 +852,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_contains) slot_count += 1;
             if (has_next) slot_count += 1;
             if (has_iter) slot_count += 1;
+            if (has_doc) slot_count += 1;
+            if (has_add) slot_count += 1;
+            if (has_sub) slot_count += 1;
+            if (has_mul) slot_count += 1;
+            if (has_neg) slot_count += 1;
+            if (has_bool) slot_count += 1;
 
             var slots: [slot_count]zm.PyType_Slot = undefined;
             var slot_idx: usize = 0;
@@ -782,6 +909,31 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
             if (has_next) {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_iternext, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NextWrapper.iternext))) };
+                slot_idx += 1;
+            }
+            if (has_doc) {
+                const doc_z: [:0]const u8 = config.doc;
+                slots[slot_idx] = .{ .slot = zm.Py_tp_doc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(doc_z.ptr))) };
+                slot_idx += 1;
+            }
+            if (has_add) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_add, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&AddWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_sub) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_subtract, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&SubWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_mul) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_multiply, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&MulWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_neg) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_negative, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NegWrapper.op))) };
+                slot_idx += 1;
+            }
+            if (has_bool) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_bool, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&BoolWrapper.op))) };
                 slot_idx += 1;
             }
             slots[slot_idx] = .{ .slot = 0, .pfunc = null };

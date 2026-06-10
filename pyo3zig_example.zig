@@ -142,6 +142,24 @@ const Vec2 = extern struct {
     pub fn init(x: i64, y: i64) Vec2 {
         return .{ .x = x, .y = y };
     }
+
+    // Operator overloading via the number protocol. Binary ops returning Vec2
+    // are wrapped into new instances; __mul__ here is a dot product (scalar).
+    pub fn __add__(self: *Vec2, other: *Vec2) Vec2 {
+        return .{ .x = self.x + other.x, .y = self.y + other.y };
+    }
+    pub fn __sub__(self: *Vec2, other: *Vec2) Vec2 {
+        return .{ .x = self.x - other.x, .y = self.y - other.y };
+    }
+    pub fn __mul__(self: *Vec2, other: *Vec2) i64 {
+        return self.x * other.x + self.y * other.y;
+    }
+    pub fn __neg__(self: *Vec2) Vec2 {
+        return .{ .x = -self.x, .y = -self.y };
+    }
+    pub fn __bool__(self: *Vec2) bool {
+        return self.x != 0 or self.y != 0;
+    }
 };
 
 fn vec2_dot(self: *Vec2, other_x: i64, other_y: i64) i64 {
@@ -188,6 +206,7 @@ fn vec_dot(a: *Vec2, b: *Vec2) i64 {
 }
 
 const Vec2Class = pz.PyClass(Vec2, .{
+    .doc = "A 2D integer vector with arithmetic operators.",
     .init_args = &.{ "x", "y" },
     .init_defaults = .{ .y = @as(i64, 0) },
     .properties = &.{

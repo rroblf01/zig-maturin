@@ -17,7 +17,11 @@ All notable changes to this project are documented here. The format is based on
 - **Keyword arguments + defaults** for free functions (`pyFnKw`), methods
   (`wrapMethodKw`), and `__init__` (`.init_args` / `.init_defaults`).
 - **Container / iterator protocols**: `__len__`, `__getitem__`, `__setitem__`,
-  `__contains__`, `__iter__`, `__next__` (self-iterators).
+  `__contains__`, `__iter__`, `__next__` (self-iterators). `__getitem__`
+  normalizes negative indices when `__len__` is defined.
+- **Operator overloading**: `__add__`, `__sub__`, `__mul__`, `__neg__`,
+  `__bool__` (binary ops are same-type, returning `Self` wraps a new instance).
+- **Class docstrings** via `.doc` on the `PyClass` config (`help(MyClass)`).
 - **`__repr__`** slot (distinct from `__str__`).
 - **Typed exceptions**: `pz.setError(exc, msg)` preserves a user-set exception;
   `pz.newException` creates custom exception types.
