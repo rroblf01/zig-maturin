@@ -147,6 +147,23 @@ fn vec2_length_sq(self: *Vec2) i64 {
     return self.x * self.x + self.y * self.y;
 }
 
+// A method that panics — the panic net must turn it into an exception.
+fn vec2_bad(self: *Vec2) i64 {
+    _ = self;
+    @panic("method boom");
+}
+
+// A class whose init panics on bad input.
+const Boomable = extern struct {
+    v: i64,
+    pub fn init(v: i64) Boomable {
+        if (v < 0) @panic("bad init");
+        return .{ .v = v };
+    }
+};
+
+const BoomableClass = pz.PyClass(Boomable, .{ .init_args = &.{"v"} });
+
 // Static method (no self / no instance).
 fn vec2_dims() i64 {
     return 2;
@@ -164,6 +181,7 @@ const Vec2Class = pz.PyClass(Vec2, .{
             .defaults = .{ .other_y = @as(i64, 0) },
         }),
         pz.staticMethod("dims", vec2_dims),
+        pz.wrapMethodNamed(Vec2, "bad", vec2_bad),
     },
 });
 
@@ -270,7 +288,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("repeat_bytes", repeat_bytes),
         pz.pyFnNamed("get_deinit_count", get_deinit_count),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass },
 });
 
 comptime {

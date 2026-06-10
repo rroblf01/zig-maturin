@@ -105,10 +105,46 @@ check("sum(Range)", sum(m.Range(0, 4)) == 6)
 # test_gil_release
 check("heavy_sum(1000)", m.heavy_sum(1000) == 499500)
 
+# test_panic_net_methods_and_init
+try:
+    m.Vec2(1, 2).bad()
+    check("method panic raises", False, "no exception")
+except RuntimeError:
+    check("method panic raises", True)
+try:
+    m.Boomable(-1)
+    check("init panic raises", False, "no exception")
+except RuntimeError:
+    check("init panic raises", True)
+check("Boomable(5).v", m.Boomable(5).v == 5)
+
 # test_module_constants
 check("VERSION constant", m.VERSION == "0.2.0")
 check("MAX_ITEMS constant", m.MAX_ITEMS == 100)
 check("PI constant", abs(m.PI - 3.14159) < 1e-9)
+
+# test_no_leaks (refcounts must stay stable across many calls)
+_obj = object()
+_before = sys.getrefcount(_obj)
+for _ in range(20000):
+    m.identity(_obj)
+check("identity: no refcount leak", sys.getrefcount(_obj) == _before)
+
+_big = list(range(64))
+_elem = _big[0]
+_eb = sys.getrefcount(_elem)
+for _ in range(10000):
+    m.sum_list(_big)
+check("sum_list: no element refcount leak", sys.getrefcount(_elem) == _eb)
+
+_s = m.greet("x")
+check("greet: returned str refcount sane", sys.getrefcount(_s) == 2)
+
+_n0 = m.get_deinit_count()
+for _ in range(5000):
+    _d = m.DeinitTracker()
+    del _d
+check("DeinitTracker: every instance finalized", m.get_deinit_count() - _n0 == 5000)
 
 # test_kwargs_and_defaults
 check("power default exp", m.power(3) == 9)

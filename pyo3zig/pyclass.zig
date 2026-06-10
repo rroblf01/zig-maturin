@@ -41,7 +41,19 @@ pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime f
     const Cell = pycell.PyCell(T);
 
     const Wrapper = struct {
+        const Ctx = struct { self: ?*zm.PyObject, args: ?*zm.PyObject };
+
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.args);
+        }
+
         pub fn trampoline(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .self = self_obj, .args = args_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+
+        fn inner(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) ?*zm.PyObject {
             const return_type = fn_info.return_type;
 
             const self_ptr = Cell.ptrFromObj(self_obj);
@@ -204,7 +216,19 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     };
 
     const NewWrapper = struct {
+        const Ctx = struct { ty: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject };
+
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return newInner(c.ty, c.args, c.kwargs);
+        }
+
         fn new(ty: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .ty = ty, .args = args, .kwargs = kwargs };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+
+        fn newInner(ty: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject) ?*zm.PyObject {
             if (!has_init_args and kwargs != null and zm.PyDict_Size(kwargs) > 0) {
                 zm.PyErr_SetString(zm.PyExc_TypeError(), "keyword arguments not supported for init");
                 return null;
