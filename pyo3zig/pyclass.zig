@@ -367,6 +367,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_xor = @hasDecl(T, "__xor__");
     const has_lshift = @hasDecl(T, "__lshift__");
     const has_rshift = @hasDecl(T, "__rshift__");
+    const has_divmod = @hasDecl(T, "__divmod__");
     // The remaining in-place operators (mutate self, return self).
     const has_itruediv = @hasDecl(T, "__itruediv__");
     const has_ifloordiv = @hasDecl(T, "__ifloordiv__");
@@ -382,18 +383,16 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     // __setitem__; reversed()/format() are looked up as plain methods.
     const has_delitem = @hasDecl(T, "__delitem__");
     const has_assitem = has_setitem or has_delitem;
-    const has_reversed = @hasDecl(T, "__reversed__");
-    const has_format = @hasDecl(T, "__format__");
     // Python semantics: defining __eq__ without __hash__ makes instances
     // unhashable. Reproduce it (CPython would otherwise keep identity hashing).
     const auto_unhashable = has_eq and !has_hash;
     // Dynamic attribute access (fall back to generic lookup).
     const has_getattr = @hasDecl(T, "__getattr__");
     const has_setattr = @hasDecl(T, "__setattr__");
-    // Plain methods auto-registered when present (context manager, pickle).
+    // Plain methods auto-registered when present (context manager, pickle, copy,
+    // formatting, ...). __enter__ is special-cased (void return -> self); the
+    // rest are detected directly in the auto_methods loop via @hasDecl.
     const has_enter = @hasDecl(T, "__enter__");
-    const has_exit = @hasDecl(T, "__exit__");
-    const has_reduce = @hasDecl(T, "__reduce__");
     // Read-only buffer protocol: __buffer__(self) returns a byte slice viewed
     // zero-copy (e.g. by numpy / memoryview). The slice must stay valid while
     // the buffer is held, so back it with a field of the instance.
@@ -422,6 +421,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 const ty = @as(?*zm.PyObject, @ptrCast(@alignCast(header.ob_type)));
                 // GC objects must be untracked before running teardown.
                 if (is_gc) zm.PyObject_GC_UnTrack(@as(?*anyopaque, @ptrCast(o)));
+                // Invalidate any weak references before the object goes away
+                // (managed weakref is enabled only for GC types; our custom
+                // dealloc must clear it explicitly).
+                if (is_gc) zm.PyObject_ClearWeakRefs(o);
                 if (@hasDecl(T, "__deinit__")) {
                     Cell.ptrFromObj(o).__deinit__();
                 }
@@ -916,6 +919,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const XorWrapper = BinaryOp(if (has_xor) T.__xor__ else {}, false, {});
     const LshiftWrapper = BinaryOp(if (has_lshift) T.__lshift__ else {}, false, {});
     const RshiftWrapper = BinaryOp(if (has_rshift) T.__rshift__ else {}, false, {});
+    const DivmodWrapper = BinaryOp(if (has_divmod) T.__divmod__ else {}, false, {});
 
     const NegWrapper = struct {
         fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
@@ -1283,7 +1287,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 }
             }
 
-            // Auto-registered plain methods (context manager + pickle hooks).
+            // Auto-registered plain methods: dunders that CPython looks up by
+            // name (not via a type slot) — context manager, pickle, copy,
+            // formatting, bytes(), the math.* hooks, reversed(). __enter__ is
+            // special (it may return void -> self), the rest are wrapped as-is.
             const auto_methods = comptime blk: {
                 var arr: []const zm.PyMethodDef = &.{};
                 if (has_enter) arr = arr ++ &[_]zm.PyMethodDef{.{
@@ -1292,10 +1299,17 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     .ml_flags = zm.METH_VARARGS,
                     .ml_doc = null,
                 }};
-                if (has_exit) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__exit__", T.__exit__)};
-                if (has_reduce) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__reduce__", T.__reduce__)};
-                if (has_reversed) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__reversed__", T.__reversed__)};
-                if (has_format) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, "__format__", T.__format__)};
+                // (Hooks returning the class's own type aren't here: a plain
+                // method converts a returned struct to a dict, not an instance —
+                // so __copy__/__deepcopy__ would misbehave and are omitted.)
+                const plain_dunders = .{
+                    "__exit__",   "__reduce__", "__reversed__",  "__format__",
+                    "__bytes__",  "__trunc__",  "__floor__",     "__ceil__",
+                    "__round__",  "__getstate__", "__setstate__",
+                };
+                for (plain_dunders) |dn| {
+                    if (@hasDecl(T, dn)) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, dn, @field(T, dn))};
+                }
                 break :blk arr;
             };
             const has_any_method = has_methods or auto_methods.len > 0;
@@ -1361,6 +1375,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_xor) slot_count += 1;
             if (has_lshift) slot_count += 1;
             if (has_rshift) slot_count += 1;
+            if (has_divmod) slot_count += 1;
             if (has_itruediv) slot_count += 1;
             if (has_ifloordiv) slot_count += 1;
             if (has_imod) slot_count += 1;
@@ -1544,6 +1559,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_nb_rshift, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&RshiftWrapper.op))) };
                 slot_idx += 1;
             }
+            if (has_divmod) {
+                slots[slot_idx] = .{ .slot = zm.Py_nb_divmod, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DivmodWrapper.op))) };
+                slot_idx += 1;
+            }
             if (has_itruediv) {
                 slots[slot_idx] = .{ .slot = zm.Py_nb_inplace_true_divide, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&ItruedivWrapper.op))) };
                 slot_idx += 1;
@@ -1610,6 +1629,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             var flags = zm.Py_TPFLAGS_DEFAULT | zm.Py_TPFLAGS_HEAPTYPE;
             if (is_gc) flags |= zm.Py_TPFLAGS_HAVE_GC;
             if (can_subclass) flags |= zm.Py_TPFLAGS_BASETYPE;
+            // Managed weakref support: instances can be the target of
+            // weakref.ref(obj). The weaklist lives in CPython's managed
+            // pre-header, which only exists for GC types — so this is gated on
+            // HAVE_GC. A custom dealloc clears it via PyObject_ClearWeakRefs.
+            if (is_gc) flags |= zm.Py_TPFLAGS_MANAGED_WEAKREF;
 
             var spec = zm.PyType_Spec{
                 .name = type_name,

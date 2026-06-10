@@ -108,6 +108,8 @@ pub const Py_tp_finalize = 80;
 pub const Py_tp_vectorcall = 82;
 pub const Py_tp_token = 83;
 
+pub const Py_TPFLAGS_MANAGED_WEAKREF = @as(c_uint, 1 << 3);
+pub const Py_TPFLAGS_MANAGED_DICT = @as(c_uint, 1 << 4);
 pub const Py_TPFLAGS_HEAPTYPE = @as(c_uint, 1 << 9);
 pub const Py_TPFLAGS_BASETYPE = @as(c_uint, 1 << 10);
 pub const Py_TPFLAGS_HAVE_GC = @as(c_uint, 1 << 14);

@@ -156,6 +156,14 @@ pub fn classStub(comptime spec: anytype) []const u8 {
         .{ "__format__", &[_][]const u8{"format_spec"} },
         .{ "__reversed__", &[_][]const u8{} },
         .{ "__delitem__", &[_][]const u8{"key"} },
+        .{ "__bytes__", &[_][]const u8{} },
+        .{ "__floor__", &[_][]const u8{} },
+        .{ "__ceil__", &[_][]const u8{} },
+        .{ "__trunc__", &[_][]const u8{} },
+        .{ "__round__", &[_][]const u8{} },
+        .{ "__divmod__", &[_][]const u8{"other"} },
+        .{ "__getstate__", &[_][]const u8{} },
+        .{ "__setstate__", &[_][]const u8{"state"} },
     };
     inline for (dunders) |d| {
         if (@hasDecl(T, d[0])) {

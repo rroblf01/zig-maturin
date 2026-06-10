@@ -365,6 +365,10 @@ const Money = extern struct {
     pub fn __truediv__(self: *Money, k: i64) f64 {
         return @as(f64, @floatFromInt(self.cents)) / @as(f64, @floatFromInt(k));
     }
+    // divmod(money, k) -> (quotient, remainder).
+    pub fn __divmod__(self: *Money, k: i64) struct { i64, i64 } {
+        return .{ @divTrunc(self.cents, k), @mod(self.cents, k) };
+    }
     // abs(m), +m.
     pub fn __abs__(self: *Money) Money {
         return .{ .cents = if (self.cents < 0) -self.cents else self.cents };
@@ -501,6 +505,42 @@ const NodeClass = pz.PyClass(Node, .{});
 fn get_node_deinit_count() i64 {
     return node_deinit_count;
 }
+
+// Numeric hooks that CPython looks up by name: math.floor/ceil/trunc, round(),
+// bytes(), and pickle's __getstate__/__setstate__. Holds tenths of a unit.
+const Temp = extern struct {
+    tenths: i64,
+    pub fn init(tenths: i64) Temp {
+        return .{ .tenths = tenths };
+    }
+    pub fn __float__(self: *Temp) f64 {
+        return @as(f64, @floatFromInt(self.tenths)) / 10.0;
+    }
+    pub fn __floor__(self: *Temp) i64 {
+        return @divFloor(self.tenths, 10);
+    }
+    pub fn __ceil__(self: *Temp) i64 {
+        return @divFloor(self.tenths + 9, 10);
+    }
+    pub fn __trunc__(self: *Temp) i64 {
+        return @divTrunc(self.tenths, 10);
+    }
+    pub fn __round__(self: *Temp) i64 {
+        return @divFloor(self.tenths + 5, 10);
+    }
+    pub fn __bytes__(self: *Temp) !pz.PyBytes {
+        var buf: [8]u8 = undefined;
+        std.mem.writeInt(i64, &buf, self.tenths, .little);
+        return pz.PyBytes.init(buf[0..]);
+    }
+    pub fn __getstate__(self: *Temp) i64 {
+        return self.tenths;
+    }
+    pub fn __setstate__(self: *Temp, state: i64) void {
+        self.tenths = state;
+    }
+};
+const TempClass = pz.PyClass(Temp, .{ .init_args = &.{"tenths"} });
 
 // Bitwise / shift operators, unary abs/pos/invert, and the matching in-place
 // forms. Operands are plain ints (mixed-type ops).
@@ -663,7 +703,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("big_mul", big_mul),
         pz.pyFnNamed("sum_bytes", sum_bytes),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass },
 });
 
 comptime {

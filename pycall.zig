@@ -78,6 +78,10 @@ pub extern fn PyBytes_AsString(?*PyObject) callconv(.c) [*]u8;
 pub extern fn PyBytes_Size(?*PyObject) callconv(.c) isize;
 pub extern fn PyBytes_AsStringAndSize(?*PyObject, *[*]u8, *isize) callconv(.c) c_int;
 
+// weakref clearing: must run in a custom tp_dealloc before teardown so any
+// live weak references to the object are invalidated.
+pub extern fn PyObject_ClearWeakRefs(?*PyObject) callconv(.c) void;
+
 // bytearray (mutable bytes). The buffer is borrowed for the call's duration.
 pub extern fn PyByteArray_AsString(?*PyObject) callconv(.c) ?[*]u8;
 pub extern fn PyByteArray_Size(?*PyObject) callconv(.c) isize;

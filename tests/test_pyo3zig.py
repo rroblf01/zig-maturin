@@ -1,7 +1,9 @@
 """Tests for the pyo3zig extension module."""
 
 import gc
+import math
 import sys
+import weakref
 
 sys.path.insert(0, ".")
 import pyo3zig_demo as m
@@ -534,6 +536,34 @@ check("type.__module__", m.Greeter.__module__ == "pyo3zig_demo")
 check("sum_bytes(bytearray)", m.sum_bytes(bytearray(b"\x01\x02\x03")) == 6)
 check("sum_bytes(bytes)", m.sum_bytes(b"\x01\x02\x03") == 6)
 check("sum_bytes(str)", m.sum_bytes("ABC") == 65 + 66 + 67)
+
+# test_divmod
+check("divmod(Money)", divmod(m.Money(17), 5) == (3, 2))
+
+# test_numeric_hooks
+t = m.Temp(37)
+check("float(Temp)", float(t) == 3.7)
+check("math.floor", math.floor(t) == 3)
+check("math.ceil", math.ceil(t) == 4)
+check("math.trunc", math.trunc(t) == 3)
+check("round(Temp)", round(t) == 4)
+check("bytes(Temp)", bytes(t) == (37).to_bytes(8, "little"))
+check("__getstate__", t.__getstate__() == 37)
+t.__setstate__(99)
+check("__setstate__", t.__getstate__() == 99)
+
+# test_weakref
+node = m.Node()
+ref = weakref.ref(node)
+check("weakref deref (GC class)", ref() is node)
+del node
+gc.collect()
+check("weakref cleared on dealloc", ref() is None)
+try:
+    weakref.ref(m.Greeter(1))
+    check("weakref rejected for value class", False, "no exception")
+except TypeError:
+    check("weakref rejected for value class", True)
 
 total = passed + failed
 print(

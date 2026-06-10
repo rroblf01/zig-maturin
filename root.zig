@@ -161,6 +161,7 @@ pub const PyByteArray_Check = pycall.PyByteArray_Check;
 pub const PyByteArray_AsString = pycall.PyByteArray_AsString;
 pub const PyByteArray_Size = pycall.PyByteArray_Size;
 pub const HashNotImplemented = pycall.HashNotImplemented;
+pub const PyObject_ClearWeakRefs = pycall.PyObject_ClearWeakRefs;
 
 pub const Py_XNewRef = pycall.Py_XNewRef;
 
@@ -225,6 +226,9 @@ pub const Py_TPFLAGS_DEFAULT = pytypes.Py_TPFLAGS_DEFAULT;
 pub const Py_TPFLAGS_HEAPTYPE = pytypes.Py_TPFLAGS_HEAPTYPE;
 pub const Py_TPFLAGS_BASETYPE = pytypes.Py_TPFLAGS_BASETYPE;
 pub const Py_TPFLAGS_HAVE_GC = pytypes.Py_TPFLAGS_HAVE_GC;
+pub const Py_TPFLAGS_MANAGED_WEAKREF = pytypes.Py_TPFLAGS_MANAGED_WEAKREF;
+pub const Py_TPFLAGS_MANAGED_DICT = pytypes.Py_TPFLAGS_MANAGED_DICT;
+pub const Py_nb_divmod = pytypes.Py_nb_divmod;
 
 pub fn method(
     comptime name: [:0]const u8,

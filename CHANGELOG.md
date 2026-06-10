@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **`weakref` support** for classes that participate in cyclic GC (those with a
+  `?*pz.PyObject` field): instances can be the target of `weakref.ref(obj)` via
+  `Py_TPFLAGS_MANAGED_WEAKREF`, cleared in the custom dealloc.
+- **`__divmod__`** (`divmod(obj, k)`).
+- **Name-lookup numeric hooks**: `__bytes__` (`bytes(obj)`), `__floor__`,
+  `__ceil__`, `__trunc__` (`math.*`), `__round__` (`round(obj)`), and pickle's
+  `__getstate__` / `__setstate__` — auto-registered as plain methods.
 - **Bitwise & shift operators**: `__and__`, `__or__`, `__xor__`, `__lshift__`,
   `__rshift__` (same mixed-operand dispatch as the arithmetic ops).
 - **Unary number ops**: `__abs__`, `__pos__`, `__invert__`.
@@ -67,7 +74,8 @@ All notable changes to this project are documented here. The format is based on
 - **Inheriting a built-in base** (e.g. custom `Exception` subclasses) and
   subclassing classes that need a custom destructor — both need teardown
   orchestration beyond this release.
-- **weakref** support (requires weakref-clearing in a custom dealloc).
+- **weakref for non-GC value classes** (managed weakref needs the GC pre-header;
+  a value class would need an explicit `tp_weaklistoffset` field instead).
 - **Subclassing classes that need a custom destructor** (`__deinit__` or GC
   classes): `Py_TPFLAGS_BASETYPE` is set only for value classes, where CPython's
   default dealloc safely handles a subclass's managed `__dict__` and GC.

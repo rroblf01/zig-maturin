@@ -160,7 +160,8 @@ Register the class in the module's `.classes` field.
 - Lifecycle / repr: `init`, `__deinit__` (called on GC), `__str__`, `__repr__`,
   `__hash__`, `__format__` (`format()` / f-string specs), `__call__` (callable
   instances), `__enter__`/`__exit__` (context manager, `with obj:`), `__reduce__`
-  (pickle).
+  (pickle), `__getstate__`/`__setstate__`, `__bytes__` (`bytes(obj)`),
+  `__floor__`/`__ceil__`/`__trunc__` (`math.*`), `__round__`.
 - Comparisons: `__eq__` (and `__ne__` derived from it), plus `__lt__`, `__le__`,
   `__gt__`, `__ge__` — define any subset (just `__lt__` enables `sorted()`).
   Defining `__eq__` without `__hash__` makes instances unhashable, as in Python.
@@ -169,7 +170,7 @@ Register the class in the module's `.classes` field.
   with `__next__` is its own iterator; `__getitem__` normalizes negative indices
   when `__len__` is present).
 - Operators: `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`,
-  `__mod__`, `__pow__`, `__matmul__`, bitwise `__and__`/`__or__`/`__xor__`/
+  `__mod__`, `__pow__`, `__matmul__`, `__divmod__`, bitwise `__and__`/`__or__`/`__xor__`/
   `__lshift__`/`__rshift__`, unary `__neg__`/`__pos__`/`__abs__`/`__invert__`/
   `__bool__`, the matching in-place forms (`__iadd__`, `__imul__`, `__iand__`,
   `__ilshift__`, … — every operator has one), and conversions
@@ -186,7 +187,8 @@ Register the class in the module's `.classes` field.
 **Cyclic GC:** a class storing a `?*pz.PyObject` field automatically gets
 `Py_TPFLAGS_HAVE_GC` with `tp_traverse`/`tp_clear`, so reference cycles are
 collectable. The framework owns one reference per field (incref on set, decref
-on clear/dealloc); don't manually decref those fields in `__deinit__`.
+on clear/dealloc); don't manually decref those fields in `__deinit__`. These GC
+classes also support `weakref.ref(obj)` (managed weakref, cleared on dealloc).
 
 **Subclassing from Python:** value classes (no `__deinit__`, no PyObject fields)
 set `Py_TPFLAGS_BASETYPE`, so Python code can `class Sub(MyClass): ...` and
