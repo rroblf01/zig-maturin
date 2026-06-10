@@ -1,0 +1,108 @@
+const std = @import("std");
+const pytypes = @import("pytypes.zig");
+const pycall = @import("pycall.zig");
+
+pub const PyObject = pytypes.PyObject;
+pub const PyMethodDef = pytypes.PyMethodDef;
+pub const PyModuleDef = pytypes.PyModuleDef;
+pub const PyModuleDef_HEAD_INIT = pytypes.PyModuleDef_HEAD_INIT;
+pub const METH_NOARGS = pytypes.METH_NOARGS;
+pub const METH_VARARGS = pytypes.METH_VARARGS;
+pub const METH_KEYWORDS = pytypes.METH_KEYWORDS;
+pub const METH_O = pytypes.METH_O;
+
+pub const PyModule_Create = pycall.PyModule_Create;
+pub const PyModule_New = pycall.PyModule_New;
+pub const PyModule_AddObject = pycall.PyModule_AddObject;
+pub const PyModule_AddIntConstant = pycall.PyModule_AddIntConstant;
+pub const PyModule_AddStringConstant = pycall.PyModule_AddStringConstant;
+
+pub const Py_INCREF = pycall.Py_INCREF;
+pub const Py_DECREF = pycall.Py_DECREF;
+pub const Py_XINCREF = pycall.Py_XINCREF;
+pub const Py_XDECREF = pycall.Py_XDECREF;
+pub const Py_NewRef = pycall.Py_NewRef;
+pub const Py_IncRef = pycall.Py_IncRef;
+pub const Py_DecRef = pycall.Py_DecRef;
+
+pub const PyUnicode_FromString = pycall.PyUnicode_FromString;
+pub const PyUnicode_FromStringAndSize = pycall.PyUnicode_FromStringAndSize;
+pub const PyUnicode_AsUTF8 = pycall.PyUnicode_AsUTF8;
+pub const PyUnicode_Check = pycall.PyUnicode_Check;
+
+pub const PyLong_FromLong = pycall.PyLong_FromLong;
+pub const PyLong_FromLongLong = pycall.PyLong_FromLongLong;
+pub const PyLong_FromUnsignedLongLong = pycall.PyLong_FromUnsignedLongLong;
+pub const PyLong_AsLong = pycall.PyLong_AsLong;
+pub const PyLong_AsLongLong = pycall.PyLong_AsLongLong;
+pub const PyLong_Check = pycall.PyLong_Check;
+
+pub const PyFloat_FromDouble = pycall.PyFloat_FromDouble;
+pub const PyFloat_AsDouble = pycall.PyFloat_AsDouble;
+pub const PyFloat_Check = pycall.PyFloat_Check;
+
+pub const PyBool_FromLong = pycall.PyBool_FromLong;
+pub const PyBool_Check = pycall.PyBool_Check;
+
+pub const Py_RETURN_NONE = pycall.Py_RETURN_NONE;
+
+pub const PyErr_SetString = pycall.PyErr_SetString;
+pub const PyErr_SetObject = pycall.PyErr_SetObject;
+pub const PyErr_Occurred = pycall.PyErr_Occurred;
+pub const PyErr_Clear = pycall.PyErr_Clear;
+
+pub const PyObject_GetAttrString = pycall.PyObject_GetAttrString;
+pub const PyObject_SetAttrString = pycall.PyObject_SetAttrString;
+pub const PyObject_CallObject = pycall.PyObject_CallObject;
+pub const PyObject_Str = pycall.PyObject_Str;
+pub const PyObject_IsTrue = pycall.PyObject_IsTrue;
+
+pub const PyArg_ParseTuple = pycall.PyArg_ParseTuple;
+pub const Py_BuildValue = pycall.Py_BuildValue;
+
+pub const PyList_New = pycall.PyList_New;
+pub const PyList_Size = pycall.PyList_Size;
+pub const PyList_GetItem = pycall.PyList_GetItem;
+pub const PyList_SetItem = pycall.PyList_SetItem;
+pub const PyList_Append = pycall.PyList_Append;
+pub const PyList_Check = pycall.PyList_Check;
+
+pub const PyDict_New = pycall.PyDict_New;
+pub const PyDict_SetItemString = pycall.PyDict_SetItemString;
+pub const PyDict_GetItemString = pycall.PyDict_GetItemString;
+pub const PyDict_Size = pycall.PyDict_Size;
+pub const PyDict_Check = pycall.PyDict_Check;
+
+pub const PyTuple_New = pycall.PyTuple_New;
+pub const PyTuple_Size = pycall.PyTuple_Size;
+pub const PyTuple_GetItem = pycall.PyTuple_GetItem;
+pub const PyTuple_SetItem = pycall.PyTuple_SetItem;
+
+pub const PyExc_Exception = pycall.PyExc_Exception;
+pub const PyExc_ValueError = pycall.PyExc_ValueError;
+pub const PyExc_TypeError = pycall.PyExc_TypeError;
+pub const PyExc_RuntimeError = pycall.PyExc_RuntimeError;
+pub const PyExc_StopIteration = pycall.PyExc_StopIteration;
+pub const PyExc_ImportError = pycall.PyExc_ImportError;
+pub const PyExc_AttributeError = pycall.PyExc_AttributeError;
+pub const PyExc_KeyError = pycall.PyExc_KeyError;
+pub const PyExc_IndexError = pycall.PyExc_IndexError;
+pub const PyExc_OSError = pycall.PyExc_OSError;
+
+pub const Py_None = pycall.Py_None;
+pub const Py_True = pycall.Py_True;
+pub const Py_False = pycall.Py_False;
+
+pub fn method(
+    comptime name: [:0]const u8,
+    comptime func: anytype,
+    comptime flags: c_int,
+    comptime doc: [:0]const u8,
+) PyMethodDef {
+    return .{
+        .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
+        .ml_meth = @ptrCast(func),
+        .ml_flags = flags,
+        .ml_doc = @as(?[*:0]const u8, @ptrCast(doc.ptr)),
+    };
+}
