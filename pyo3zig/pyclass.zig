@@ -12,6 +12,28 @@ fn buildTypeName(comptime T: type) [*:0]const u8 {
     return @as([*:0]const u8, @ptrCast(short.ptr));
 }
 
+fn callFuncReturningPyObject(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, args: anytype) ?*zm.PyObject {
+    if (fn_info.return_type) |ret| {
+        if (ret == void) {
+            @call(.auto, func, args);
+            return zm.Py_NewRef(zm.Py_None());
+        }
+        const ret_info = @typeInfo(ret);
+        if (ret_info == .error_union) {
+            const result = @call(.auto, func, args) catch |err| {
+                errors.setPyException(err);
+                return null;
+            };
+            return funcwrap.returnToPyObjectValue(result);
+        }
+        const result = @call(.auto, func, args);
+        return funcwrap.returnToPyObjectValue(result);
+    } else {
+        @call(.auto, func, args);
+        return zm.Py_NewRef(zm.Py_None());
+    }
+}
+
 pub fn wrapMethod(comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
     return .{
         .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
@@ -28,11 +50,7 @@ pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime f
     const Cell = pycell.PyCell(T);
 
     const Wrapper = struct {
-        pub fn trampoline(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
-            if (kwargs != null and zm.PyDict_Size(kwargs) > 0) {
-                zm.PyErr_SetString(zm.PyExc_TypeError(), "keyword arguments not supported for method");
-                return null;
-            }
+        pub fn trampoline(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
             const return_type = fn_info.return_type;
 
             const self_ptr = Cell.ptrFromObj(self_obj);
@@ -90,8 +108,8 @@ pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime f
 
     return zm.PyMethodDef{
         .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
-        .ml_meth = @ptrCast(&Wrapper.trampoline),
-        .ml_flags = zm.METH_VARARGS | zm.METH_KEYWORDS,
+        .ml_meth = &Wrapper.trampoline,
+        .ml_flags = zm.METH_VARARGS,
         .ml_doc = null,
     };
 }
@@ -252,10 +270,6 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 };
 
                 const result = zm.PyType_FromSpec(&spec);
-                if (result == null) {
-                    zm.PyMem_RawFree(getset_ptr);
-                    std.heap.c_allocator.free(method_defs);
-                }
                 return result;
             } else {
                 var slots = [_]zm.PyType_Slot{
@@ -274,9 +288,6 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 };
 
                 const result = zm.PyType_FromSpec(&spec);
-                if (result == null) {
-                    zm.PyMem_RawFree(getset_ptr);
-                }
                 return result;
             }
         }

@@ -117,6 +117,8 @@ pub const Py_tp_dealloc = pytypes.Py_tp_dealloc;
 pub const Py_tp_new = pytypes.Py_tp_new;
 pub const Py_tp_getset = pytypes.Py_tp_getset;
 pub const Py_tp_methods = pytypes.Py_tp_methods;
+pub const Py_tp_str = pytypes.Py_tp_str;
+pub const Py_tp_repr = pytypes.Py_tp_repr;
 pub const Py_TPFLAGS_DEFAULT = pytypes.Py_TPFLAGS_DEFAULT;
 pub const Py_TPFLAGS_HEAPTYPE = pytypes.Py_TPFLAGS_HEAPTYPE;
 

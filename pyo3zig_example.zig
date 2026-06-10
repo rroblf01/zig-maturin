@@ -35,6 +35,8 @@ const Greeter = extern struct {
     pub fn init(v: i64) Greeter {
         return Greeter{ .val = v };
     }
+
+    // __str__ temporarily removed for debugging
 };
 
 fn greet_method(self: *Greeter) !pz.PyString {
