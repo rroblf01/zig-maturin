@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [0.4.0] - 2026-06-10
+## [0.3.0] - 2026-06-10
 
 ### Added
 - **Subclassing from Python**: value classes (no `__deinit__`, no PyObject
@@ -26,16 +26,6 @@ All notable changes to this project are documented here. The format is based on
 - **CI leak-check job**: the full suite runs under Valgrind (`PYTHONMALLOC=malloc`,
   definite-leak detection) to catch C-level leaks.
 - **Benchmarks** documented in the README.
-
-### Not yet
-- **Inheriting a built-in base** (e.g. custom `Exception` subclasses) and
-  subclassing classes that need a custom destructor — both need teardown
-  orchestration beyond this release.
-- **weakref** support (requires weakref-clearing in a custom dealloc).
-
-## [0.3.0] - 2026-06-10
-
-### Added
 - **Full rich comparisons**: `__lt__`, `__le__`, `__gt__`, `__ge__` (any subset);
   `__ne__` is derived from `__eq__`. Enables `sorted()`, `min()`, `max()`.
 - **`__call__`**: callable instances (tp_call).
@@ -55,6 +45,10 @@ All notable changes to this project are documented here. The format is based on
   allocator. Fixes a type-reference leak when `__init__` failed.
 
 ### Not yet
+- **Inheriting a built-in base** (e.g. custom `Exception` subclasses) and
+  subclassing classes that need a custom destructor — both need teardown
+  orchestration beyond this release.
+- **weakref** support (requires weakref-clearing in a custom dealloc).
 - **Inheritance / subclassing from Python** is deferred: correct support needs
   custom-dealloc orchestration for a subclass's managed `__dict__` and GC, which
   is out of scope for this release. `Py_TPFLAGS_BASETYPE` is intentionally not

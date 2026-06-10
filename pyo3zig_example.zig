@@ -512,7 +512,7 @@ fn __pyi__() []const u8 {
 const Mod = pz.pyModule("pyo3zig_demo", .{
     .doc = "Demo module built with pyo3zig.",
     .constants = .{
-        .VERSION = "0.4.0",
+        .VERSION = "0.3.0",
         .MAX_ITEMS = @as(i64, 100),
         .PI = @as(f64, 3.14159),
     },

@@ -1,10 +1,13 @@
 """Tests for the pyo3zig extension module."""
+
 import gc
 import sys
-sys.path.insert(0, '.')
+
+sys.path.insert(0, ".")
 import pyo3zig_demo as m
 
 passed, failed = 0, 0
+
 
 def check(name, ok, detail=""):
     global passed, failed
@@ -17,6 +20,7 @@ def check(name, ok, detail=""):
         if detail:
             msg += f": {detail}"
         print(msg)
+
 
 # test_hello
 r = m.hello()
@@ -75,7 +79,9 @@ try:
     m.parse_positive(-3)
     check("parse_positive raises ValueError", False, "no exception")
 except ValueError as e:
-    check("parse_positive raises ValueError", str(e) == "value must be positive", str(e))
+    check(
+        "parse_positive raises ValueError", str(e) == "value must be positive", str(e)
+    )
 except Exception as e:
     check("parse_positive raises ValueError", False, f"wrong type {type(e).__name__}")
 
@@ -120,7 +126,9 @@ try:
     check("Vec2 + int rejected", False, "no exception")
 except TypeError:
     check("Vec2 + int rejected", True)
-check("Vec2 __doc__", m.Vec2.__doc__ == "A 2D integer vector with arithmetic operators.")
+check(
+    "Vec2 __doc__", m.Vec2.__doc__ == "A 2D integer vector with arithmetic operators."
+)
 
 # test_full_comparisons (sorting, min/max via __lt__ etc)
 g_a, g_b, g_c = m.Greeter(1), m.Greeter(5), m.Greeter(3)
@@ -214,12 +222,18 @@ check("memoryview content", bytes(b8) == b"AAAAAAAA")
 # test_big_ints (>64-bit)
 check("big_mul 2**100", m.big_mul(2**50, 2**50) == 2**100)
 check("big_mul negative", m.big_mul(-(2**60), 8) == -(2**63))
-check("big_mul roundtrip", m.big_mul(123456789012345678901234567890, 1) == 123456789012345678901234567890)
+check(
+    "big_mul roundtrip",
+    m.big_mul(123456789012345678901234567890, 1) == 123456789012345678901234567890,
+)
+
 
 # test_subclass_from_python (value classes are subclassable)
 class MyVec(m.Vec2):
     def norm(self):
         return self.x * self.x + self.y * self.y
+
+
 mv2 = MyVec(3, 4)
 check("subclass instance", isinstance(mv2, m.Vec2) and mv2.x == 3)
 check("subclass method", mv2.norm() == 25)
@@ -230,7 +244,11 @@ try:
     m.power(base="oops")
     check("kwargs arg-name error", False, "no exception")
 except TypeError as e:
-    check("kwargs arg-name error", "argument 'base'" in str(e) and "expected int" in str(e), str(e))
+    check(
+        "kwargs arg-name error",
+        "argument 'base'" in str(e) and "expected int" in str(e),
+        str(e),
+    )
 
 # test_gc_cycles (reference cycle must be collectable)
 n0 = m.get_node_deinit_count()
@@ -279,7 +297,7 @@ except RuntimeError:
 check("Boomable(5).v", m.Boomable(5).v == 5)
 
 # test_module_constants
-check("VERSION constant", m.VERSION == "0.4.0")
+check("VERSION constant", m.VERSION == "0.3.0")
 check("MAX_ITEMS constant", m.MAX_ITEMS == 100)
 check("PI constant", abs(m.PI - 3.14159) < 1e-9)
 
@@ -354,7 +372,11 @@ _stub = m.__pyi__()
 check("stub has add def", "def add(a: int, b: int) -> int" in _stub, _stub)
 check("stub has class Vec2", "class Vec2:" in _stub, _stub)
 check("stub has Vec2 fields", "x: int" in _stub and "y: int" in _stub)
-check("stub has Vec2 method", "def dot(self, other_x: int, other_y: int) -> int" in _stub, _stub)
+check(
+    "stub has Vec2 method",
+    "def dot(self, other_x: int, other_y: int) -> int" in _stub,
+    _stub,
+)
 check("stub has class Range", "class Range:" in _stub)
 check("stub has dunder __eq__", "def __eq__(self, other:" in _stub, _stub)
 check("stub has dunder __len__", "def __len__(self) -> int" in _stub, _stub)
@@ -406,7 +428,11 @@ try:
     m.add("x", 2)
     check("add type error message", False, "no exception")
 except TypeError as e:
-    check("add type error message", "expected int" in str(e) and "got str" in str(e), str(e))
+    check(
+        "add type error message",
+        "expected int" in str(e) and "got str" in str(e),
+        str(e),
+    )
 try:
     m.sum_list(42)
     check("sum_list type error message", False, "no exception")
@@ -430,5 +456,8 @@ del d
 check("deinit count after delete", m.get_deinit_count() == count_before + 1)
 
 total = passed + failed
-print(f"\nResults: {passed}/{total} passed" + (f", {failed} failed!" if failed else ", all passed!"))
+print(
+    f"\nResults: {passed}/{total} passed"
+    + (f", {failed} failed!" if failed else ", all passed!")
+)
 sys.exit(0 if failed == 0 else 1)
