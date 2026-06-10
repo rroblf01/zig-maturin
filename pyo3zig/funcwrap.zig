@@ -4,7 +4,7 @@ const conversion = @import("conversion.zig");
 const errors = @import("errors.zig");
 
 pub fn paramTypesTupleDirect(comptime params: []const std.builtin.Type.Fn.Param) type {
-    if (params.len == 0) return struct {};
+    if (params.len == 0) return @TypeOf(.{});
     comptime var types: [params.len]type = undefined;
     inline for (params, 0..) |p, i| {
         types[i] = p.type.?;
@@ -14,17 +14,17 @@ pub fn paramTypesTupleDirect(comptime params: []const std.builtin.Type.Fn.Param)
 
 fn setConversionError(err: conversion.ConversionError) void {
     switch (err) {
-        error.PythonTypeError => zm.PyErr_SetString(zm.PyExc_TypeError, "type conversion error"),
-        error.PythonValueError => zm.PyErr_SetString(zm.PyExc_ValueError, "value conversion error"),
-        error.Overflow => zm.PyErr_SetString(zm.PyExc_OverflowError, "integer overflow"),
-        error.NotImplemented => zm.PyErr_SetString(zm.PyExc_NotImplementedError, "conversion not implemented"),
+        error.PythonTypeError => zm.PyErr_SetString(zm.PyExc_TypeError(), "type conversion error"),
+        error.PythonValueError => zm.PyErr_SetString(zm.PyExc_ValueError(), "value conversion error"),
+        error.Overflow => zm.PyErr_SetString(zm.PyExc_OverflowError(), "integer overflow"),
+        error.NotImplemented => zm.PyErr_SetString(zm.PyExc_NotImplementedError(), "conversion not implemented"),
     }
 }
 
 fn returnToPyObjectValue(value: anytype) ?*zm.PyObject {
     const T = @TypeOf(value);
     if (T == void) {
-        return zm.Py_NewRef(zm.Py_None);
+        return zm.Py_NewRef(zm.Py_None());
     }
     return conversion.toPyObject(value) catch |err| {
         setConversionError(err);
@@ -32,7 +32,7 @@ fn returnToPyObjectValue(value: anytype) ?*zm.PyObject {
     };
 }
 
-fn wrapFnInner(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, self: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+fn wrapFnInner(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, _: ?*zm.PyObject, args_obj: ?*zm.PyObject) ?*zm.PyObject {
     const params = fn_info.params;
     const return_type = fn_info.return_type;
 
@@ -40,11 +40,11 @@ fn wrapFnInner(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, se
         const expected = @as(isize, @intCast(params.len));
         const actual = zm.PyTuple_Size(args);
         if (actual != expected) {
-            var buf: [128]u8 = undefined;
+            var buf: [128]u8 = std.mem.zeroes([128]u8);
             const msg = std.fmt.bufPrint(&buf, "expected {d} arguments, got {d}", .{ expected, actual }) catch "argument count mismatch";
-            const len = @min(msg.len, buf.len - 1);
-            buf[len] = 0;
-            zm.PyErr_SetString(zm.PyExc_TypeError, @as([*:0]const u8, @ptrCast(&buf)));
+            const end = @min(msg.len, buf.len - 1);
+            buf[end] = 0;
+            zm.PyErr_SetString(zm.PyExc_TypeError(), @ptrCast(&buf));
             return null;
         }
 
@@ -63,7 +63,7 @@ fn wrapFnInner(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, se
         if (return_type) |ret| {
             if (ret == void) {
                 @call(.auto, func, call_args);
-                return zm.Py_NewRef(zm.Py_None);
+                return zm.Py_NewRef(zm.Py_None());
             }
             const ret_info = @typeInfo(ret);
             if (ret_info == .error_union) {
@@ -77,19 +77,18 @@ fn wrapFnInner(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, se
             return returnToPyObjectValue(result);
         } else {
             @call(.auto, func, call_args);
-            return zm.Py_NewRef(zm.Py_None);
+            return zm.Py_NewRef(zm.Py_None());
         }
     } else {
-        zm.PyErr_SetString(zm.PyExc_TypeError, "no arguments tuple");
+        zm.PyErr_SetString(zm.PyExc_TypeError(), "no arguments tuple");
         return null;
     }
 }
 
 pub fn wrap(comptime func: anytype, comptime name: [:0]const u8, comptime doc: [:0]const u8) zm.PyMethodDef {
     const FnType = @TypeOf(func);
-    const fn_info = @typeInfo(FnType).fn;
-    const num_params = fn_info.params.len;
-    const flags: c_int = if (num_params == 0) zm.METH_NOARGS else zm.METH_VARARGS;
+    const fn_info = @typeInfo(FnType).@"fn";
+    const flags: c_int = zm.METH_VARARGS;
 
     const Wrapper = struct {
         pub fn trampoline(self: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
@@ -109,10 +108,12 @@ pub fn wrapNamed(comptime name: [:0]const u8, comptime func: anytype) zm.PyMetho
     return wrap(func, name, "");
 }
 
-pub fn pyFn(comptime func: anytype) zm.PyMethodDef {
+pub fn pyFn(comptime _: anytype) zm.PyMethodDef {
     @compileError("Use pyFnNamed(\"name\", func) — can't infer function name from a value");
 }
 
 pub fn pyFnNamed(comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
     return wrap(func, name, "");
 }
+
+

@@ -12,6 +12,7 @@ pub const pycell = @import("pycell.zig");
 pub const pyclass = @import("pyclass.zig");
 
 pub const pyModule = module.pyModule;
+pub const exportModule = module.exportModule;
 pub const PyClass = pyclass.PyClass;
 pub const PyCell = pycell.PyCell;
 pub const pyFn = funcwrap.pyFn;

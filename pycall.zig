@@ -29,8 +29,7 @@ pub extern fn Py_DecRef(?*PyObject) callconv(.c) void;
 // String functions
 pub extern fn PyUnicode_FromString([*:0]const u8) callconv(.c) ?*PyObject;
 pub extern fn PyUnicode_FromStringAndSize([*]const u8, isize) callconv(.c) ?*PyObject;
-pub extern fn PyUnicode_AsUTF8(?*PyObject) callconv(.c) [*:0]const u8;
-pub extern fn PyUnicode_Check(?*PyObject) callconv(.c) c_int;
+pub extern fn PyUnicode_AsUTF8(?*PyObject) callconv(.c) ?[*:0]const u8;
 
 // Integer functions
 pub extern fn PyLong_FromLong(c_long) callconv(.c) ?*PyObject;
@@ -39,16 +38,13 @@ pub extern fn PyLong_FromUnsignedLongLong(u64) callconv(.c) ?*PyObject;
 pub extern fn PyLong_AsLong(?*PyObject) callconv(.c) c_long;
 pub extern fn PyLong_AsLongLong(?*PyObject) callconv(.c) i64;
 pub extern fn PyLong_AsUnsignedLongLong(?*PyObject) callconv(.c) u64;
-pub extern fn PyLong_Check(?*PyObject) callconv(.c) c_int;
 
 // Float functions
 pub extern fn PyFloat_FromDouble(f64) callconv(.c) ?*PyObject;
 pub extern fn PyFloat_AsDouble(?*PyObject) callconv(.c) f64;
-pub extern fn PyFloat_Check(?*PyObject) callconv(.c) c_int;
 
 // Boolean functions
 pub extern fn PyBool_FromLong(c_long) callconv(.c) ?*PyObject;
-pub extern fn PyBool_Check(?*PyObject) callconv(.c) c_int;
 
 // None singleton
 pub fn Py_RETURN_NONE() callconv(.c) ?*PyObject {
@@ -99,14 +95,12 @@ pub extern fn PyList_Size(?*PyObject) callconv(.c) isize;
 pub extern fn PyList_GetItem(?*PyObject, isize) callconv(.c) ?*PyObject;
 pub extern fn PyList_SetItem(?*PyObject, isize, ?*PyObject) callconv(.c) c_int;
 pub extern fn PyList_Append(?*PyObject, ?*PyObject) callconv(.c) c_int;
-pub extern fn PyList_Check(?*PyObject) callconv(.c) c_int;
 
 // Dict functions
 pub extern fn PyDict_New() callconv(.c) ?*PyObject;
 pub extern fn PyDict_SetItemString(?*PyObject, [*:0]const u8, ?*PyObject) callconv(.c) c_int;
 pub extern fn PyDict_GetItemString(?*PyObject, [*:0]const u8) callconv(.c) ?*PyObject;
 pub extern fn PyDict_Size(?*PyObject) callconv(.c) isize;
-pub extern fn PyDict_Check(?*PyObject) callconv(.c) c_int;
 
 // Tuple functions
 pub extern fn PyTuple_New(isize) callconv(.c) ?*PyObject;
@@ -115,27 +109,88 @@ pub extern fn PyTuple_GetItem(?*PyObject, isize) callconv(.c) ?*PyObject;
 pub extern fn PyTuple_SetItem(?*PyObject, isize, ?*PyObject) callconv(.c) c_int;
 
 // Type utilities
-pub extern fn PyType_Check(?*PyObject) callconv(.c) c_int;
 pub extern fn PyType_IsSubtype(?*PyObject, ?*PyObject) callconv(.c) c_int;
 
-// Exception types (singletons declared in Python C-API)
-pub const PyExc_Exception = @extern(?*PyObject, .{ .name = "PyExc_Exception" });
-pub const PyExc_ValueError = @extern(?*PyObject, .{ .name = "PyExc_ValueError" });
-pub const PyExc_TypeError = @extern(?*PyObject, .{ .name = "PyExc_TypeError" });
-pub const PyExc_RuntimeError = @extern(?*PyObject, .{ .name = "PyExc_RuntimeError" });
-pub const PyExc_StopIteration = @extern(?*PyObject, .{ .name = "PyExc_StopIteration" });
-pub const PyExc_ImportError = @extern(?*PyObject, .{ .name = "PyExc_ImportError" });
-pub const PyExc_AttributeError = @extern(?*PyObject, .{ .name = "PyExc_AttributeError" });
-pub const PyExc_KeyError = @extern(?*PyObject, .{ .name = "PyExc_KeyError" });
-pub const PyExc_IndexError = @extern(?*PyObject, .{ .name = "PyExc_IndexError" });
-pub const PyExc_OSError = @extern(?*PyObject, .{ .name = "PyExc_OSError" });
-pub const PyExc_MemoryError = @extern(?*PyObject, .{ .name = "PyExc_MemoryError" });
-pub const PyExc_OverflowError = @extern(?*PyObject, .{ .name = "PyExc_OverflowError" });
-pub const PyExc_NotImplementedError = @extern(?*PyObject, .{ .name = "PyExc_NotImplementedError" });
-pub const PyExc_SystemError = @extern(?*PyObject, .{ .name = "PyExc_SystemError" });
-pub const PyExc_ZeroDivisionError = @extern(?*PyObject, .{ .name = "PyExc_ZeroDivisionError" });
+// Type object singletons (via C wrappers for correct pointer resolution)
+pub extern fn pyo3zig_PyUnicode_Type() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyLong_Type() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyFloat_Type() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyBool_Type() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyList_Type() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyDict_Type() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyTuple_Type() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyType_Type() callconv(.c) ?*PyObject;
 
-// Singletons
-pub const Py_None = @extern(?*PyObject, .{ .name = "_Py_NoneStruct" });
-pub const Py_True = @extern(?*PyObject, .{ .name = "_Py_TrueStruct" });
-pub const Py_False = @extern(?*PyObject, .{ .name = "_Py_FalseStruct" });
+pub fn PyUnicode_Type() callconv(.c) ?*PyObject { return pyo3zig_PyUnicode_Type(); }
+pub fn PyLong_Type() callconv(.c) ?*PyObject { return pyo3zig_PyLong_Type(); }
+pub fn PyFloat_Type() callconv(.c) ?*PyObject { return pyo3zig_PyFloat_Type(); }
+pub fn PyBool_Type() callconv(.c) ?*PyObject { return pyo3zig_PyBool_Type(); }
+pub fn PyList_Type() callconv(.c) ?*PyObject { return pyo3zig_PyList_Type(); }
+pub fn PyDict_Type() callconv(.c) ?*PyObject { return pyo3zig_PyDict_Type(); }
+pub fn PyTuple_Type() callconv(.c) ?*PyObject { return pyo3zig_PyTuple_Type(); }
+pub fn PyType_Type() callconv(.c) ?*PyObject { return pyo3zig_PyType_Type(); }
+
+// Xxx_Check functions (macros in C, implemented as Zig functions via PyObject_IsInstance)
+pub fn PyUnicode_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyUnicode_Type());
+}
+pub fn PyLong_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyLong_Type());
+}
+pub fn PyFloat_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyFloat_Type());
+}
+pub fn PyBool_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyBool_Type());
+}
+pub fn PyList_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyList_Type());
+}
+pub fn PyDict_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyDict_Type());
+}
+pub fn PyTuple_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyTuple_Type());
+}
+pub fn PyType_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyType_Type());
+}
+
+// Exception types (via C wrappers for correct pointer resolution)
+pub extern fn pyo3zig_PyExc_Exception() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_ValueError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_TypeError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_RuntimeError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_StopIteration() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_ImportError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_AttributeError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_KeyError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_IndexError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_OSError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_MemoryError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_OverflowError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_NotImplementedError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_SystemError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_PyExc_ZeroDivisionError() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_Py_None() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_Py_True() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_Py_False() callconv(.c) ?*PyObject;
+
+pub fn PyExc_Exception() callconv(.c) ?*PyObject { return pyo3zig_PyExc_Exception(); }
+pub fn PyExc_ValueError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_ValueError(); }
+pub fn PyExc_TypeError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_TypeError(); }
+pub fn PyExc_RuntimeError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_RuntimeError(); }
+pub fn PyExc_StopIteration() callconv(.c) ?*PyObject { return pyo3zig_PyExc_StopIteration(); }
+pub fn PyExc_ImportError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_ImportError(); }
+pub fn PyExc_AttributeError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_AttributeError(); }
+pub fn PyExc_KeyError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_KeyError(); }
+pub fn PyExc_IndexError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_IndexError(); }
+pub fn PyExc_OSError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_OSError(); }
+pub fn PyExc_MemoryError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_MemoryError(); }
+pub fn PyExc_OverflowError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_OverflowError(); }
+pub fn PyExc_NotImplementedError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_NotImplementedError(); }
+pub fn PyExc_SystemError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_SystemError(); }
+pub fn PyExc_ZeroDivisionError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_ZeroDivisionError(); }
+pub fn Py_None() callconv(.c) ?*PyObject { return pyo3zig_Py_None(); }
+pub fn Py_True() callconv(.c) ?*PyObject { return pyo3zig_Py_True(); }
+pub fn Py_False() callconv(.c) ?*PyObject { return pyo3zig_Py_False(); }

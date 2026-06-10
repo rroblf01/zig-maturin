@@ -88,6 +88,11 @@ pub const PyExc_AttributeError = pycall.PyExc_AttributeError;
 pub const PyExc_KeyError = pycall.PyExc_KeyError;
 pub const PyExc_IndexError = pycall.PyExc_IndexError;
 pub const PyExc_OSError = pycall.PyExc_OSError;
+pub const PyExc_MemoryError = pycall.PyExc_MemoryError;
+pub const PyExc_OverflowError = pycall.PyExc_OverflowError;
+pub const PyExc_NotImplementedError = pycall.PyExc_NotImplementedError;
+pub const PyExc_SystemError = pycall.PyExc_SystemError;
+pub const PyExc_ZeroDivisionError = pycall.PyExc_ZeroDivisionError;
 
 pub const Py_None = pycall.Py_None;
 pub const Py_True = pycall.Py_True;

@@ -11,7 +11,7 @@ pub fn PyCell(comptime T: type) type {
         };
 
         pub fn objFromPtr(ptr: *T) ?*zm.PyObject {
-            const layout = @fieldParentPtr(ObjectLayout, "data", ptr);
+            const layout: *ObjectLayout = @fieldParentPtr("data", ptr);
             return @as(?*zm.PyObject, @ptrCast(layout));
         }
 

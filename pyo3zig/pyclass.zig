@@ -38,7 +38,7 @@ pub fn PyClass(comptime T: type) type {
             _ = kwargs;
             const alloc = zm.PyMem_RawMalloc(Cell.allocSize());
             if (alloc == null) {
-                zm.PyErr_SetString(zm.PyExc_MemoryError, "out of memory");
+                zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
                 return null;
             }
             const obj = @as(?*zm.PyObject, @ptrCast(@alignCast(alloc)));
@@ -50,14 +50,14 @@ pub fn PyClass(comptime T: type) type {
                 const ptr = Cell.ptrFromObj(obj);
                 const init_fn = T.init;
                 const InitFnType = @TypeOf(init_fn);
-                const fn_info = @typeInfo(InitFnType).fn;
+                const fn_info = @typeInfo(InitFnType).@"fn";
                 const params = fn_info.params;
 
                 if (args) |a| {
                     const actual = zm.PyTuple_Size(a);
                     const expected = @as(isize, @intCast(params.len));
                     if (actual != expected) {
-                        zm.PyErr_SetString(zm.PyExc_TypeError, "wrong number of arguments for init");
+                        zm.PyErr_SetString(zm.PyExc_TypeError(), "wrong number of arguments for init");
                         zm.PyMem_RawFree(alloc);
                         return null;
                     }
@@ -68,15 +68,15 @@ pub fn PyClass(comptime T: type) type {
                     inline for (params, 0..) |param, i| {
                         const ParamT = param.type.?;
                         const arg_obj = zm.PyTuple_GetItem(a, @as(isize, @intCast(i)));
-                        init_args[i] = conversion.fromPyObject(ParamT, arg_obj) catch |err| {
-                            zm.PyErr_SetString(zm.PyExc_TypeError, "init argument conversion failed");
+                        init_args[i] = conversion.fromPyObject(ParamT, arg_obj) catch {
+                            zm.PyErr_SetString(zm.PyExc_TypeError(), "init argument conversion failed");
                             zm.PyMem_RawFree(alloc);
                             return null;
                         };
                     }
 
-                    ptr.* = @call(.auto, init_fn, init_args) catch |err| {
-                        zm.PyErr_SetString(zm.PyExc_RuntimeError, "init failed");
+                    ptr.* = @call(.auto, init_fn, init_args) catch {
+                        zm.PyErr_SetString(zm.PyExc_RuntimeError(), "init failed");
                         zm.PyMem_RawFree(alloc);
                         return null;
                     };
@@ -89,18 +89,6 @@ pub fn PyClass(comptime T: type) type {
 
     const TypeBuilder = struct {
         fn getTypeObject() ?*zm.PyObject {
-            var method_defs: [countMethods(T) + 1]zm.PyMethodDef = undefined;
-            var method_idx: usize = 0;
-
-            inline for (comptime std.meta.declarations(T)) |decl| {
-                if (decl.is_pub and decl.data == .fn_decl) {
-                    const fn_ptr = @field(T, decl.name);
-                    method_defs[method_idx] = funcwrap.pyFnNamed(@as([:0]const u8, @ptrCast(@as([*]const u8, @ptrCast(&decl.name)))), fn_ptr);
-                    method_idx += 1;
-                }
-            }
-            method_defs[method_idx] = .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null };
-
             var getset_defs: [countFields(T) + 1]zm.PyGetSetDef = undefined;
             var getset_idx: usize = 0;
 
@@ -114,7 +102,7 @@ pub fn PyClass(comptime T: type) type {
                     fn setter(obj: ?*zm.PyObject, val: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) c_int {
                         const ptr = Cell.ptrFromObj(obj);
                         const converted = conversion.fromPyObject(field.type, val) catch {
-                            zm.PyErr_SetString(zm.PyExc_TypeError, "type mismatch for field");
+                            zm.PyErr_SetString(zm.PyExc_TypeError(), "type mismatch for field");
                             return -1;
                         };
                         @field(ptr, field.name) = converted;
@@ -122,8 +110,9 @@ pub fn PyClass(comptime T: type) type {
                     }
                 };
 
+                const field_name = @as([*:0]const u8, @ptrCast(@as([*]const u8, @ptrCast(&field.name))));
                 getset_defs[getset_idx] = .{
-                    .name = @as([*:0]const u8, @ptrCast(@as([*]const u8, @ptrCast(&field.name)))),
+                    .name = field_name,
                     .get = &FieldWrapper.getter,
                     .set = &FieldWrapper.setter,
                     .doc = null,
@@ -136,7 +125,6 @@ pub fn PyClass(comptime T: type) type {
             var slots = [_]zm.PyType_Slot{
                 .{ .slot = zm.Py_tp_dealloc, .pfunc = @as(?*anyopaque, @ptrCast(&DeallocWrapper.dealloc)) },
                 .{ .slot = zm.Py_tp_new, .pfunc = @as(?*anyopaque, @ptrCast(&NewWrapper.new)) },
-                .{ .slot = zm.Py_tp_methods, .pfunc = @as(?*anyopaque, @ptrCast(&method_defs)) },
                 .{ .slot = zm.Py_tp_getset, .pfunc = @as(?*anyopaque, @ptrCast(&getset_defs)) },
                 .{ .slot = 0, .pfunc = null },
             };
@@ -161,16 +149,6 @@ pub fn PyClass(comptime T: type) type {
             return type_name;
         }
     };
-}
-
-fn countMethods(comptime T: type) usize {
-    comptime var count: usize = 0;
-    inline for (comptime std.meta.declarations(T)) |decl| {
-        if (decl.is_pub and decl.data == .fn_decl) {
-            count += 1;
-        }
-    }
-    return count;
 }
 
 fn countFields(comptime T: type) usize {

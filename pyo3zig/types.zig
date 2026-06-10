@@ -17,7 +17,7 @@ pub const PyObjectType = enum(c_int) {
 
 pub fn typeOf(obj: ?*zm.PyObject) PyObjectType {
     if (obj == null) return .none;
-    if (obj == zm.Py_None) return .none;
+    if (obj == zm.Py_None()) return .none;
     if (zm.PyBool_Check(obj) != 0) return .bool;
     if (zm.PyLong_Check(obj) != 0) return .int;
     if (zm.PyFloat_Check(obj) != 0) return .float;

@@ -1,5 +1,6 @@
 const std = @import("std");
 const zm = @import("zig-maturin");
+const refcount = @import("refcount.zig");
 
 pub const ConversionError = error{
     PythonTypeError,
@@ -35,20 +36,13 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
             return zm.PyBool_FromLong(if (value) 1 else 0);
         },
         .null => {
-            return zm.Py_NewRef(zm.Py_None);
+            return zm.Py_NewRef(zm.Py_None());
         },
         .optional => {
             if (value) |v| {
                 return try toPyObject(v);
             }
-            return zm.Py_NewRef(zm.Py_None);
-        },
-        .error_union => |info| {
-            if (value) |v| {
-                return try toPyObject(v);
-            } else |err| {
-                return err;
-            }
+            return zm.Py_NewRef(zm.Py_None());
         },
         .pointer => |info| {
             if (info.size == .slice and info.child == u8) {
@@ -57,6 +51,9 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
             return error.NotImplemented;
         },
         else => {
+            if (@hasDecl(T, "borrow")) {
+                return zm.Py_NewRef(value.borrow());
+            }
             @compileError("Cannot convert " ++ @typeName(T) ++ " to Python object");
         },
     }
@@ -109,7 +106,7 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
             return zm.PyObject_IsTrue(obj) != 0;
         },
         .optional => |info| {
-            if (obj == zm.Py_None) {
+            if (obj == zm.Py_None()) {
                 return null;
             }
             return try fromPyObject(info.child, obj);
@@ -117,10 +114,12 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
         .pointer => |info| {
             if (info.size == .slice and info.child == u8) {
                 if (zm.PyUnicode_Check(obj) == 0) return error.PythonTypeError;
-                const c_str = zm.PyUnicode_AsUTF8(obj);
-                if (c_str == null) return error.PythonValueError;
-                const len = std.mem.len(c_str);
-                return c_str[0..len];
+                const c_str_opt = zm.PyUnicode_AsUTF8(obj);
+                if (c_str_opt) |c_str| {
+                    const len = std.mem.len(c_str);
+                    return c_str[0..len];
+                }
+                return error.PythonValueError;
             }
             return error.NotImplemented;
         },
