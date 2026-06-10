@@ -181,7 +181,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     fn getter(obj: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) ?*zm.PyObject {
                         const ptr = Cell.ptrFromObj(obj);
                         const val = @field(ptr, field.name);
-                        return conversion.toPyObject(val) catch null;
+                        return conversion.toPyObject(val) catch |err| {
+                            funcwrap.setConversionError(err);
+                            return null;
+                        };
                     }
                     fn setter(obj: ?*zm.PyObject, val: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) c_int {
                         const ptr = Cell.ptrFromObj(obj);
