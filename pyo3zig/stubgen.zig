@@ -74,3 +74,65 @@ pub fn moduleStub(comptime entries: anytype) []const u8 {
     }
     return out;
 }
+
+/// A `.pyi` method line: like `funcStub` but indented and with an implicit
+/// `self` (the first Zig parameter is skipped). `arg_names` names the remaining
+/// parameters, matching `wrapMethodNamed` / `wrapMethodKw`.
+pub fn methodStub(
+    comptime name: []const u8,
+    comptime func: anytype,
+    comptime arg_names: []const []const u8,
+) []const u8 {
+    const fn_info = @typeInfo(@TypeOf(func)).@"fn";
+    const params = fn_info.params[1..];
+    comptime var sig: []const u8 = "    def " ++ name ++ "(self";
+    inline for (params, 0..) |param, i| {
+        const pname = if (i < arg_names.len) arg_names[i] else std.fmt.comptimePrint("arg{d}", .{i});
+        sig = sig ++ ", " ++ pname ++ ": " ++ pyType(param.type.?);
+    }
+    const ret = if (fn_info.return_type) |r| pyType(r) else "None";
+    return sig ++ ") -> " ++ ret ++ ": ...\n";
+}
+
+/// A `.pyi` `class` block for a Zig class struct. `spec` is
+/// `.{ .name = "Vec2", .type = Vec2, .init = &.{"x","y"},
+///     .methods = .{ .{ .name = "dot", .func = dot, .args = &.{...} }, ... } }`.
+/// `.init` and `.methods` are optional. Struct fields become annotated class
+/// attributes; computed properties aren't reflected (declare them by hand if
+/// needed).
+pub fn classStub(comptime spec: anytype) []const u8 {
+    const T = spec.type;
+    const fields = std.meta.fields(T);
+    const has_init = @hasField(@TypeOf(spec), "init");
+    const has_methods = @hasField(@TypeOf(spec), "methods");
+
+    comptime var out: []const u8 = "class " ++ spec.name ++ ":\n";
+    comptime var has_body = false;
+
+    inline for (fields) |f| {
+        out = out ++ "    " ++ f.name ++ ": " ++ pyType(f.type) ++ "\n";
+        has_body = true;
+    }
+
+    if (has_init) {
+        const init_info = @typeInfo(@TypeOf(T.init)).@"fn";
+        comptime var sig: []const u8 = "    def __init__(self";
+        inline for (init_info.params, 0..) |param, i| {
+            const pname = if (i < spec.init.len) spec.init[i] else std.fmt.comptimePrint("arg{d}", .{i});
+            sig = sig ++ ", " ++ pname ++ ": " ++ pyType(param.type.?);
+        }
+        out = out ++ sig ++ ") -> None: ...\n";
+        has_body = true;
+    }
+
+    if (has_methods) {
+        inline for (spec.methods) |meth| {
+            const names: []const []const u8 = if (@hasField(@TypeOf(meth), "args")) meth.args else &.{};
+            out = out ++ methodStub(meth.name, meth.func, names);
+            has_body = true;
+        }
+    }
+
+    if (!has_body) out = out ++ "    pass\n";
+    return out ++ "\n";
+}

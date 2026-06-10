@@ -126,6 +126,10 @@ MAIN_ZIG_TEMPLATE = '''\
 const std = @import("std");
 const pz = @import("pyo3zig");
 
+// Opt into the panic safety net: a Zig panic becomes a Python exception
+// instead of aborting the interpreter.
+pub const panic = pz.panic;
+
 fn hello() []const u8 {{
     return "Hello from Zig!";
 }}
@@ -134,11 +138,62 @@ fn add(a: i64, b: i64) i64 {{
     return a + b;
 }}
 
+// Returning `!T` makes a Zig error surface as a Python exception. Raise a
+// specific one with pz.setError before returning the error.
+fn divide(a: i64, b: i64) !i64 {{
+    if (b == 0) {{
+        pz.setError(pz.PyExc_ZeroDivisionError(), "division by zero");
+        return error.DivByZero;
+    }}
+    return @divTrunc(a, b);
+}}
+
+// An `extern struct` becomes a Python class. Fields are attributes; `init` is
+// the constructor.
+const Counter = extern struct {{
+    value: i64,
+
+    pub fn init(start: i64) Counter {{
+        return .{{ .value = start }};
+    }}
+}};
+
+fn counter_incr(self: *Counter, by: i64) i64 {{
+    self.value += by;
+    return self.value;
+}}
+
+const CounterClass = pz.PyClass(Counter, .{{
+    .init_args = &.{{"start"}},
+    .methods = &[_]pz.PyMethodDef{{
+        pz.wrapMethodNamed(Counter, "incr", counter_incr),
+    }},
+}});
+
+// Compile-time type stubs shipped as `{module_name}.pyi` for IDEs/type checkers.
+const STUB = pz.moduleStub(.{{
+    .{{ .name = "hello", .func = hello }},
+    .{{ .name = "add", .func = add, .args = &.{{ "a", "b" }} }},
+    .{{ .name = "divide", .func = divide, .args = &.{{ "a", "b" }} }},
+}}) ++ "\\n" ++ pz.classStub(.{{
+    .name = "Counter",
+    .type = Counter,
+    .init = &.{{"start"}},
+    .methods = .{{ .{{ .name = "incr", .func = counter_incr, .args = &.{{"by"}} }} }},
+}});
+
+fn __pyi__() []const u8 {{
+    return STUB;
+}}
+
 const Mod = pz.pyModule("{module_name}", .{{
     .functions = &[_]pz.PyMethodDef{{
         pz.pyFnNamed("hello", hello),
         pz.pyFnNamed("add", add),
+        pz.pyFnNamed("divide", divide),
+        pz.pyFnNamed("__pyi__", __pyi__),
     }},
+    .classes = &[_]type{{CounterClass}},
 }});
 
 comptime {{

@@ -23,7 +23,10 @@ All notable changes to this project are documented here. The format is based on
   `pz.newException` creates custom exception types.
 - **GIL release** for long computations via `pz.allowThreads`.
 - **Module constants** via `.constants = .{ ... }`.
-- **Compile-time `.pyi` stub generation** shipped inside the wheel.
+- **Compile-time `.pyi` stub generation** shipped inside the wheel, now
+  including **class stubs** (`classStub`: fields, `__init__`, and methods).
+- **Richer scaffold template** demonstrating panics, `!T` errors, a class with a
+  method, and `.pyi` generation out of the box.
 
 ### Changed
 - **Precise `TypeError` messages** on argument conversion failures

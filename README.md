@@ -225,10 +225,16 @@ Type hints are generated **at compile time** from your Zig signatures:
 const STUB = pz.moduleStub(.{
     .{ .name = "add", .func = add, .args = &.{ "a", "b" } },
     .{ .name = "greet", .func = greet, .args = &.{"name"} },
+}) ++ "\n" ++ pz.classStub(.{
+    .name = "Greeter", .type = Greeter, .init = &.{"v"},
+    .methods = .{ .{ .name = "greet", .func = greet_method } },
 });
 fn __pyi__() []const u8 { return STUB; }
 // register pz.pyFnNamed("__pyi__", __pyi__)
 ```
+
+`classStub` emits a `class` block (struct fields as attributes, `__init__`, and
+methods) so type checkers see your classes too.
 
 `zig-maturin build` calls `__pyi__()` on native builds and ships the resulting
 `my_extension.pyi` inside the wheel, so type checkers see your signatures.

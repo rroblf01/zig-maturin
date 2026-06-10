@@ -18,6 +18,8 @@ pub const stubgen = @import("stubgen.zig");
 pub const pyType = stubgen.pyType;
 pub const funcStub = stubgen.funcStub;
 pub const moduleStub = stubgen.moduleStub;
+pub const methodStub = stubgen.methodStub;
+pub const classStub = stubgen.classStub;
 
 pub const pyModule = module.pyModule;
 pub const exportModule = module.exportModule;

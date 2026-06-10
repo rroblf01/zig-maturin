@@ -277,8 +277,32 @@ const STUB = pz.moduleStub(.{
     .{ .name = "power", .func = power, .args = &.{ "base", "exp" } },
 });
 
+// Class stubs so type checkers see the classes too.
+const CLASS_STUBS =
+    pz.classStub(.{
+        .name = "Greeter",
+        .type = Greeter,
+        .init = &.{"v"},
+        .methods = .{
+            .{ .name = "greet", .func = greet_method },
+        },
+    }) ++
+    pz.classStub(.{
+        .name = "Vec2",
+        .type = Vec2,
+        .init = &.{ "x", "y" },
+        .methods = .{
+            .{ .name = "dot", .func = vec2_dot, .args = &.{ "other_x", "other_y" } },
+        },
+    }) ++
+    pz.classStub(.{
+        .name = "Range",
+        .type = Range,
+        .init = &.{ "start", "stop" },
+    });
+
 fn __pyi__() []const u8 {
-    return STUB;
+    return STUB ++ "\n" ++ CLASS_STUBS;
 }
 
 const Mod = pz.pyModule("pyo3zig_demo", .{

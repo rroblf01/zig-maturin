@@ -206,6 +206,14 @@ try:
 except TypeError:
     check("greet(42) TypeError", True)
 
+# test_stub (functions + classes present in the generated .pyi)
+_stub = m.__pyi__()
+check("stub has add def", "def add(a: int, b: int) -> int" in _stub, _stub)
+check("stub has class Vec2", "class Vec2:" in _stub, _stub)
+check("stub has Vec2 fields", "x: int" in _stub and "y: int" in _stub)
+check("stub has Vec2 method", "def dot(self, other_x: int, other_y: int) -> int" in _stub, _stub)
+check("stub has class Range", "class Range:" in _stub)
+
 # test_module
 check("has hello", hasattr(m, "hello"))
 check("has add", hasattr(m, "add"))
