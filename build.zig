@@ -10,12 +10,22 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const pz_mod = b.addModule("pyo3zig", .{
+        .root_source_file = b.path("pyo3zig/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zig-maturin", .module = zm_mod },
+        },
+    });
+
     const example_mod = b.createModule(.{
         .root_source_file = b.path("example.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zig-maturin", .module = zm_mod },
+            .{ .name = "pyo3zig", .module = pz_mod },
         },
     });
 

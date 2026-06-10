@@ -4,6 +4,11 @@ pub const Py_ssize_t = isize;
 
 pub const PyObject = opaque {};
 
+pub const PyObjectHeader = extern struct {
+    ob_refcnt: isize,
+    ob_type: ?*anyopaque,
+};
+
 pub const PyCFunction = *const fn (?*PyObject, ?*PyObject) callconv(.c) ?*PyObject;
 
 pub const METH_VARARGS: c_int = 0x0001;

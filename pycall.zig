@@ -38,6 +38,7 @@ pub extern fn PyLong_FromLongLong(i64) callconv(.c) ?*PyObject;
 pub extern fn PyLong_FromUnsignedLongLong(u64) callconv(.c) ?*PyObject;
 pub extern fn PyLong_AsLong(?*PyObject) callconv(.c) c_long;
 pub extern fn PyLong_AsLongLong(?*PyObject) callconv(.c) i64;
+pub extern fn PyLong_AsUnsignedLongLong(?*PyObject) callconv(.c) u64;
 pub extern fn PyLong_Check(?*PyObject) callconv(.c) c_int;
 
 // Float functions
