@@ -113,6 +113,31 @@ pub const PyMem_RawMalloc = pycall.PyMem_RawMalloc;
 pub const PyMem_RawFree = pycall.PyMem_RawFree;
 
 pub const PyType_FromSpec = pycall.PyType_FromSpec;
+pub const PyType_FromSpecWithBases = pycall.PyType_FromSpecWithBases;
+pub const PyType_Ready = pycall.PyType_Ready;
+pub const PyType_Check = pycall.PyType_Check;
+pub const PyType_IsSubtype = pycall.PyType_IsSubtype;
+
+pub const PyErr_Format = pycall.PyErr_Format;
+pub const PyErr_NewException = pycall.PyErr_NewException;
+
+pub const PyObject_Repr = pycall.PyObject_Repr;
+pub const PyObject_Type = pycall.PyObject_Type;
+pub const PyObject_IsInstance = pycall.PyObject_IsInstance;
+pub const PyObject_CallFunction = pycall.PyObject_CallFunction;
+
+pub const PyGILState_Ensure = pycall.PyGILState_Ensure;
+pub const PyGILState_Release = pycall.PyGILState_Release;
+
+pub const PyUnicode_DecodeUTF8 = pycall.PyUnicode_DecodeUTF8;
+
+pub const PyBytes_FromString = pycall.PyBytes_FromString;
+pub const PyBytes_AsString = pycall.PyBytes_AsString;
+
+pub const Py_XNewRef = pycall.Py_XNewRef;
+
+pub const PyModuleDef_Init = pycall.PyModuleDef_Init;
+pub const PyModule_AddFunctions = pycall.PyModule_AddFunctions;
 
 pub const Py_tp_dealloc = pytypes.Py_tp_dealloc;
 pub const Py_tp_new = pytypes.Py_tp_new;
