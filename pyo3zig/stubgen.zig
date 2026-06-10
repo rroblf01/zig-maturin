@@ -133,6 +133,33 @@ pub fn classStub(comptime spec: anytype) []const u8 {
         }
     }
 
+    // Auto-emit dunder methods declared on the struct whose signatures map
+    // cleanly to Python types (scalars/str/bool). Operators returning Self are
+    // skipped — the stub generator can't spell the class type for them yet.
+    const dunders = .{
+        .{ "__str__", &[_][]const u8{} },
+        .{ "__repr__", &[_][]const u8{} },
+        .{ "__hash__", &[_][]const u8{} },
+        .{ "__eq__", &[_][]const u8{"other"} },
+        .{ "__lt__", &[_][]const u8{"other"} },
+        .{ "__le__", &[_][]const u8{"other"} },
+        .{ "__gt__", &[_][]const u8{"other"} },
+        .{ "__ge__", &[_][]const u8{"other"} },
+        .{ "__len__", &[_][]const u8{} },
+        .{ "__getitem__", &[_][]const u8{"key"} },
+        .{ "__contains__", &[_][]const u8{"item"} },
+        .{ "__call__", &[_][]const u8{} },
+        .{ "__int__", &[_][]const u8{} },
+        .{ "__float__", &[_][]const u8{} },
+        .{ "__bool__", &[_][]const u8{} },
+    };
+    inline for (dunders) |d| {
+        if (@hasDecl(T, d[0])) {
+            out = out ++ methodStub(d[0], @field(T, d[0]), d[1]);
+            has_body = true;
+        }
+    }
+
     if (!has_body) out = out ++ "    pass\n";
     return out ++ "\n";
 }

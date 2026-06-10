@@ -153,8 +153,15 @@ except TypeError:
 mi = m.Money(100)
 mi += m.Money(50)
 check("Money += (in-place)", mi.cents == 150)
+ms = m.Money(100)
+ms -= m.Money(30)
+check("Money -= (in-place)", ms.cents == 70)
+mp = m.Money(10)
+mp *= 3
+check("Money *= int (in-place)", mp.cents == 30)
 check("int(Money)", int(m.Money(100)) == 100)
 check("float(Money)", float(m.Money(100)) == 100.0)
+check("Money.__reduce__()", m.Money(7).__reduce__() == (7,))
 
 # test_context_manager
 res = m.Resource()
@@ -162,6 +169,29 @@ check("Resource starts closed", res.open == 0)
 with m.Resource() as r:
     check("Resource open in with", r.open == 1)
 check("with-block returns self", r.open == 0)
+# __exit__ returning False does NOT suppress
+try:
+    with m.Resource():
+        raise ValueError("boom")
+    check("Resource does not suppress", False, "no exception")
+except ValueError:
+    check("Resource does not suppress", True)
+# __exit__ returning True suppresses the exception
+suppressed = True
+with m.Suppressor():
+    raise ValueError("swallowed")
+    suppressed = False  # unreachable
+check("Suppressor swallows exception", suppressed)
+
+# test_setattr_error (__setattr__ raising)
+ro = m.ReadOnly(5)
+check("ReadOnly field read", ro.x == 5)
+try:
+    ro.x = 99
+    check("ReadOnly __setattr__ raises", False, "no exception")
+except AttributeError:
+    check("ReadOnly __setattr__ raises", True)
+check("ReadOnly unchanged", ro.x == 5)
 
 # test_setattr
 rec = m.Recorder()
@@ -326,6 +356,8 @@ check("stub has class Vec2", "class Vec2:" in _stub, _stub)
 check("stub has Vec2 fields", "x: int" in _stub and "y: int" in _stub)
 check("stub has Vec2 method", "def dot(self, other_x: int, other_y: int) -> int" in _stub, _stub)
 check("stub has class Range", "class Range:" in _stub)
+check("stub has dunder __eq__", "def __eq__(self, other:" in _stub, _stub)
+check("stub has dunder __len__", "def __len__(self) -> int" in _stub, _stub)
 
 # test_module
 check("has hello", hasattr(m, "hello"))

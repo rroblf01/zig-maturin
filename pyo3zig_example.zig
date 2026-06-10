@@ -332,9 +332,19 @@ const Money = extern struct {
         while (n > 0) : (n -= 1) r *= self.cents;
         return .{ .cents = r };
     }
-    // In-place: money += money (mutates self).
+    // In-place: money += / -= money, money *= int (mutate self).
     pub fn __iadd__(self: *Money, o: *Money) void {
         self.cents += o.cents;
+    }
+    pub fn __isub__(self: *Money, o: *Money) void {
+        self.cents -= o.cents;
+    }
+    pub fn __imul__(self: *Money, k: i64) void {
+        self.cents *= k;
+    }
+    // Pickle hook: returns a tuple describing how to reconstruct the value.
+    pub fn __reduce__(self: *Money) struct { i64 } {
+        return .{self.cents};
     }
     // Numeric conversions: int(m), float(m).
     pub fn __int__(self: *Money) i64 {
@@ -362,6 +372,31 @@ const Resource = extern struct {
     }
 };
 const ResourceClass = pz.PyClass(Resource, .{});
+
+// Context manager whose __exit__ returns true -> suppresses the exception.
+const Suppressor = extern struct {
+    pub fn init() Suppressor {
+        return .{};
+    }
+    pub fn __enter__(_: *Suppressor) void {}
+    pub fn __exit__(_: *Suppressor, _: ?*pz.PyObject, _: ?*pz.PyObject, _: ?*pz.PyObject) bool {
+        return true; // swallow whatever was raised inside the block
+    }
+};
+const SuppressorClass = pz.PyClass(Suppressor, .{});
+
+// __setattr__ that rejects every assignment with an error (read-only object).
+const ReadOnly = extern struct {
+    x: i64,
+    pub fn init(x: i64) ReadOnly {
+        return .{ .x = x };
+    }
+    pub fn __setattr__(_: *ReadOnly, _: []const u8, _: ?*pz.PyObject) !void {
+        pz.setError(pz.PyExc_AttributeError(), "object is read-only");
+        return error.ReadOnly;
+    }
+};
+const ReadOnlyClass = pz.PyClass(ReadOnly, .{});
 
 // __setattr__ intercepts every attribute assignment.
 const Recorder = extern struct {
@@ -507,7 +542,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("get_node_deinit_count", get_node_deinit_count),
         pz.pyFnNamed("big_mul", big_mul),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, RecorderClass, DynamicClass, Bytes8Class },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class },
 });
 
 comptime {

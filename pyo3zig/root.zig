@@ -53,6 +53,11 @@ pub const PyExc_IndexError = zm.PyExc_IndexError;
 pub const PyExc_RuntimeError = zm.PyExc_RuntimeError;
 pub const PyExc_OverflowError = zm.PyExc_OverflowError;
 pub const PyExc_ZeroDivisionError = zm.PyExc_ZeroDivisionError;
+pub const PyExc_AttributeError = zm.PyExc_AttributeError;
+pub const PyExc_NotImplementedError = zm.PyExc_NotImplementedError;
+pub const PyExc_OSError = zm.PyExc_OSError;
+pub const PyExc_MemoryError = zm.PyExc_MemoryError;
+pub const PyExc_Exception = zm.PyExc_Exception;
 
 pub const GILGuard = gil.GILGuard;
 pub const allowThreads = gil.allowThreads;
