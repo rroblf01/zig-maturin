@@ -9,8 +9,17 @@ pub extern fn pz_guard(
     func: *const fn (?*anyopaque) callconv(.c) ?*PyObject,
     ctx: ?*anyopaque,
 ) callconv(.c) ?*PyObject;
+pub extern fn pz_guard_ssize(
+    func: *const fn (?*anyopaque) callconv(.c) isize,
+    ctx: ?*anyopaque,
+) callconv(.c) isize;
+pub extern fn pz_guard_int(
+    func: *const fn (?*anyopaque) callconv(.c) c_int,
+    ctx: ?*anyopaque,
+) callconv(.c) c_int;
 pub extern fn pz_guard_active() callconv(.c) c_int;
 pub extern fn pz_panic_longjmp() callconv(.c) noreturn;
+pub extern fn pz_type_name(?*PyObject) callconv(.c) [*:0]const u8;
 
 // GIL release for long Zig-only computations.
 pub const PyThreadState = opaque {};

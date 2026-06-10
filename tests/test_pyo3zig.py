@@ -87,6 +87,16 @@ check("Vec2.dot positional", v1.dot(1, 2) == 11)
 check("Vec2.dot kwarg default", v1.dot(other_x=2) == 6)
 check("Vec2.length_sq property", v1.length_sq == 25)
 check("Vec2.dims staticmethod", m.Vec2.dims() == 2)
+# classmethod / alternative constructor
+vp = m.Vec2.from_pair({"x": 5, "y": 6})
+check("Vec2.from_pair classmethod", isinstance(vp, m.Vec2) and vp.x == 5 and vp.y == 6)
+# class instance passed as argument (*Vec2)
+check("vec_dot(Vec2, Vec2)", m.vec_dot(m.Vec2(1, 2), m.Vec2(3, 4)) == 11)
+try:
+    m.vec_dot(m.Vec2(1, 2), "nope")
+    check("vec_dot wrong type", False, "no exception")
+except TypeError as e:
+    check("vec_dot wrong type", "Vec2" in str(e), str(e))
 try:
     v1.length_sq = 99
     check("length_sq read-only", False, "no error")
@@ -101,6 +111,13 @@ check("3 in Range", (3 in r) is True)
 check("10 not in Range", (10 in r) is False)
 check("list(Range)", list(m.Range(0, 3)) == [0, 1, 2])
 check("sum(Range)", sum(m.Range(0, 4)) == 6)
+# panic net on a dunder (__getitem__ panics at index 99)
+try:
+    _ = m.Range(0, 5)[99]
+    check("getitem panic raises", False, "no exception")
+except RuntimeError:
+    check("getitem panic raises", True)
+check("alive after getitem panic", m.Range(0, 5)[2] == 2)
 
 # test_gil_release
 check("heavy_sum(1000)", m.heavy_sum(1000) == 499500)
@@ -227,6 +244,21 @@ check("Greeter second instance", g2.greet() == "Hello, val=100!")
 g3 = m.Greeter(42)
 check("str(Greeter)", str(g3) == "Greeter(val=42)")
 check("str(Greeter(100))", str(m.Greeter(100)) == "Greeter(val=100)")
+
+# test_repr (distinct from __str__)
+check("repr(Greeter)", repr(g3) == "<Greeter val=42>")
+
+# test_error_messages (precise: expected X, got Y)
+try:
+    m.add("x", 2)
+    check("add type error message", False, "no exception")
+except TypeError as e:
+    check("add type error message", "expected int" in str(e) and "got str" in str(e), str(e))
+try:
+    m.sum_list(42)
+    check("sum_list type error message", False, "no exception")
+except TypeError as e:
+    check("sum_list type error message", "list or tuple" in str(e), str(e))
 
 # test_kwargs_rejected
 try:

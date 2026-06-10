@@ -161,6 +161,7 @@ pub fn wrapMethodKw(comptime T: type, comptime name: [:0]const u8, comptime func
     };
 }
 
+const METH_CLASS: c_int = 0x10;
 const METH_STATIC: c_int = 0x20;
 
 /// A static method (no `self`, no instance) on a class. Register it in the
@@ -169,6 +170,86 @@ pub fn staticMethod(comptime name: [:0]const u8, comptime func: anytype) zm.PyMe
     var def = funcwrap.wrap(func, name, "");
     def.ml_flags |= METH_STATIC;
     return def;
+}
+
+/// A class method: receives the class (not an instance). The most common use
+/// is an alternative constructor — if `func` returns `T` (or `!T`), the
+/// returned struct is wrapped into a fresh instance of the class, just like
+/// `__init__` would. Otherwise the return value is converted normally.
+///
+///     fn from_pair(p: struct { x: i64, y: i64 }) Vec2 { return .{ .x = p.x, .y = p.y }; }
+///     pz.classMethod(Vec2, "from_pair", from_pair)
+pub fn classMethod(comptime T: type, comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
+    const Cell = pycell.PyCell(T);
+    const fn_info = @typeInfo(@TypeOf(func)).@"fn";
+    const params = fn_info.params;
+
+    const Wrapper = struct {
+        const Ctx = struct { cls: ?*zm.PyObject, args: ?*zm.PyObject };
+
+        // Wrap a returned T into a new Python instance of `cls`.
+        fn build(cls: ?*zm.PyObject, result: T) ?*zm.PyObject {
+            const alloc = zm.PyMem_RawMalloc(Cell.allocSize());
+            if (alloc == null) {
+                zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
+                return null;
+            }
+            const obj = @as(?*zm.PyObject, @ptrCast(@alignCast(alloc)));
+            const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(alloc)));
+            header.ob_refcnt = 1;
+            header.ob_type = @as(?*anyopaque, @ptrCast(cls));
+            zm.Py_XINCREF(cls);
+            Cell.ptrFromObj(obj).* = result;
+            return obj;
+        }
+
+        fn inner(cls: ?*zm.PyObject, args_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const expected = @as(isize, @intCast(params.len));
+            const actual: isize = if (args_obj) |a| zm.PyTuple_Size(a) else 0;
+            if (actual != expected) {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "wrong number of arguments");
+                return null;
+            }
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const a = arena.allocator();
+            var call_args: funcwrap.paramTypesTupleDirect(params) = undefined;
+            inline for (params, 0..) |param, i| {
+                const arg_obj = zm.PyTuple_GetItem(args_obj, @as(isize, @intCast(i)));
+                call_args[i] = conversion.fromPyObject(param.type.?, arg_obj, a) catch |err| {
+                    funcwrap.setConversionError(err);
+                    return null;
+                };
+            }
+            const RetT = fn_info.return_type orelse void;
+            if (RetT == T) {
+                return build(cls, @call(.auto, func, call_args));
+            } else if (@typeInfo(RetT) == .error_union and @typeInfo(RetT).error_union.payload == T) {
+                const result = @call(.auto, func, call_args) catch |err| {
+                    errors.setPyExceptionIfNeeded(err);
+                    return null;
+                };
+                return build(cls, result);
+            }
+            return funcwrap.callAndConvert(func, fn_info, call_args);
+        }
+
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.cls, c.args);
+        }
+        pub fn trampoline(cls: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .cls = cls, .args = args_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+
+    return zm.PyMethodDef{
+        .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
+        .ml_meth = &Wrapper.trampoline,
+        .ml_flags = zm.METH_VARARGS | METH_CLASS,
+        .ml_doc = null,
+    };
 }
 
 pub fn PyClass(comptime T: type, comptime config: anytype) type {
@@ -299,30 +380,51 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
+    // All slot bodies below run user code, so each is wrapped in the panic
+    // safety net (pz_guard / pz_guard_ssize / pz_guard_int): a Zig panic
+    // becomes a Python exception instead of aborting the interpreter. Slots
+    // taking only `self` pass it straight through as the guard context; others
+    // pack their arguments into a small stack Ctx.
     const StrWrapper = struct {
-        fn str(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
             const ptr = Cell.ptrFromObj(self_obj);
-            const FuncType = @TypeOf(T.__str__);
-            const fn_info = @typeInfo(FuncType).@"fn";
+            const fn_info = @typeInfo(@TypeOf(T.__str__)).@"fn";
             return callFuncReturningPyObject(T.__str__, fn_info, .{ptr});
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn str(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
         }
     };
 
     const ReprWrapper = struct {
-        fn repr(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
             const ptr = Cell.ptrFromObj(self_obj);
-            const FuncType = @TypeOf(T.__repr__);
-            const fn_info = @typeInfo(FuncType).@"fn";
+            const fn_info = @typeInfo(@TypeOf(T.__repr__)).@"fn";
             return callFuncReturningPyObject(T.__repr__, fn_info, .{ptr});
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn repr(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
         }
     };
 
     const HashWrapper = struct {
-        fn hash(self_obj: ?*zm.PyObject) callconv(.c) isize {
+        fn inner(self_obj: ?*zm.PyObject) isize {
             const ptr = Cell.ptrFromObj(self_obj);
             const result = @as(isize, @intCast(T.__hash__(ptr)));
             // -1 is CPython's error sentinel; remap to a valid hash.
             return if (result == -1) -2 else result;
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) isize {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn hash(self_obj: ?*zm.PyObject) callconv(.c) isize {
+            return zm.pz_guard_ssize(&thunk, @ptrCast(self_obj));
         }
     };
 
@@ -330,8 +432,9 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         // CPython richcompare op codes.
         const Py_EQ: c_int = 2;
         const Py_NE: c_int = 3;
+        const Ctx = struct { self: ?*zm.PyObject, other: ?*zm.PyObject, op: c_int };
 
-        fn richcompare(self_obj: ?*zm.PyObject, other_obj: ?*zm.PyObject, op: c_int) callconv(.c) ?*zm.PyObject {
+        fn inner(self_obj: ?*zm.PyObject, other_obj: ?*zm.PyObject, op: c_int) ?*zm.PyObject {
             // Only equality is derivable from __eq__; other orderings are
             // unsupported unless the user provides them.
             if (op != Py_EQ and op != Py_NE) return zm.Py_NewRef(zm.Py_NotImplemented());
@@ -346,17 +449,32 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (result) return zm.Py_NewRef(zm.Py_True());
             return zm.Py_NewRef(zm.Py_False());
         }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.other, c.op);
+        }
+        fn richcompare(self_obj: ?*zm.PyObject, other_obj: ?*zm.PyObject, op: c_int) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .self = self_obj, .other = other_obj, .op = op };
+            return zm.pz_guard(&thunk, &ctx);
+        }
     };
 
     const LenWrapper = struct {
-        fn len(self_obj: ?*zm.PyObject) callconv(.c) isize {
+        fn inner(self_obj: ?*zm.PyObject) isize {
             const ptr = Cell.ptrFromObj(self_obj);
             return @as(isize, @intCast(T.__len__(ptr)));
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) isize {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn len(self_obj: ?*zm.PyObject) callconv(.c) isize {
+            return zm.pz_guard_ssize(&thunk, @ptrCast(self_obj));
         }
     };
 
     const GetItemWrapper = struct {
-        fn getitem(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+        const Ctx = struct { self: ?*zm.PyObject, key: ?*zm.PyObject };
+        fn inner(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject) ?*zm.PyObject {
             const ptr = Cell.ptrFromObj(self_obj);
             const fn_info = @typeInfo(@TypeOf(T.__getitem__)).@"fn";
             var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
@@ -367,10 +485,19 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             };
             return callFuncReturningPyObject(T.__getitem__, fn_info, .{ ptr, key });
         }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.key);
+        }
+        fn getitem(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .self = self_obj, .key = key_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
     };
 
     const SetItemWrapper = struct {
-        fn setitem(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject, val_obj: ?*zm.PyObject) callconv(.c) c_int {
+        const Ctx = struct { self: ?*zm.PyObject, key: ?*zm.PyObject, val: ?*zm.PyObject };
+        fn inner(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject, val_obj: ?*zm.PyObject) c_int {
             const ptr = Cell.ptrFromObj(self_obj);
             if (val_obj == null) {
                 zm.PyErr_SetString(zm.PyExc_TypeError(), "item deletion not supported");
@@ -398,10 +525,19 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
             return 0;
         }
+        fn thunk(p: ?*anyopaque) callconv(.c) c_int {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.key, c.val);
+        }
+        fn setitem(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject, val_obj: ?*zm.PyObject) callconv(.c) c_int {
+            var ctx = Ctx{ .self = self_obj, .key = key_obj, .val = val_obj };
+            return zm.pz_guard_int(&thunk, &ctx);
+        }
     };
 
     const ContainsWrapper = struct {
-        fn contains(self_obj: ?*zm.PyObject, item_obj: ?*zm.PyObject) callconv(.c) c_int {
+        const Ctx = struct { self: ?*zm.PyObject, item: ?*zm.PyObject };
+        fn inner(self_obj: ?*zm.PyObject, item_obj: ?*zm.PyObject) c_int {
             const ptr = Cell.ptrFromObj(self_obj);
             const fn_info = @typeInfo(@TypeOf(T.__contains__)).@"fn";
             var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
@@ -411,10 +547,18 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             };
             return if (T.__contains__(ptr, item)) 1 else 0;
         }
+        fn thunk(p: ?*anyopaque) callconv(.c) c_int {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.item);
+        }
+        fn contains(self_obj: ?*zm.PyObject, item_obj: ?*zm.PyObject) callconv(.c) c_int {
+            var ctx = Ctx{ .self = self_obj, .item = item_obj };
+            return zm.pz_guard_int(&thunk, &ctx);
+        }
     };
 
     const NextWrapper = struct {
-        fn iternext(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
             const ptr = Cell.ptrFromObj(self_obj);
             const RetT = @typeInfo(@TypeOf(T.__next__)).@"fn".return_type.?;
             const maybe = if (@typeInfo(RetT) == .error_union)
@@ -428,10 +572,16 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (maybe) |v| return funcwrap.returnToPyObjectValue(v);
             return null;
         }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn iternext(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
+        }
     };
 
     const IterWrapper = struct {
-        fn iter(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
             if (@hasDecl(T, "__iter__")) {
                 const ptr = Cell.ptrFromObj(self_obj);
                 const fn_info = @typeInfo(@TypeOf(T.__iter__)).@"fn";
@@ -439,6 +589,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
             // Self-iterator: a type with __next__ is its own iterator.
             return zm.Py_NewRef(self_obj);
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn iter(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
         }
     };
 
@@ -506,12 +662,19 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 inline for (config.properties, 0..) |prop, j| {
                     const has_set = @hasField(@TypeOf(prop), "set");
                     const PropWrapper = struct {
-                        fn getter(obj: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+                        const SetCtx = struct { obj: ?*zm.PyObject, val: ?*zm.PyObject };
+                        fn getInner(obj: ?*zm.PyObject) ?*zm.PyObject {
                             const ptr = Cell.ptrFromObj(obj);
                             const gi = @typeInfo(@TypeOf(prop.get)).@"fn";
                             return callFuncReturningPyObject(prop.get, gi, .{ptr});
                         }
-                        fn setter(obj: ?*zm.PyObject, val: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) c_int {
+                        fn getThunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+                            return getInner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+                        }
+                        fn getter(obj: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+                            return zm.pz_guard(&getThunk, @ptrCast(obj));
+                        }
+                        fn setInner(obj: ?*zm.PyObject, val: ?*zm.PyObject) c_int {
                             const ptr = Cell.ptrFromObj(obj);
                             const set_params = @typeInfo(@TypeOf(prop.set)).@"fn".params;
                             const ValT = set_params[1].type.?;
@@ -521,6 +684,14 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                             };
                             prop.set(ptr, converted);
                             return 0;
+                        }
+                        fn setThunk(p: ?*anyopaque) callconv(.c) c_int {
+                            const c = @as(*SetCtx, @ptrCast(@alignCast(p)));
+                            return setInner(c.obj, c.val);
+                        }
+                        fn setter(obj: ?*zm.PyObject, val: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) c_int {
+                            var ctx = SetCtx{ .obj = obj, .val = val };
+                            return zm.pz_guard_int(&setThunk, &ctx);
                         }
                     };
                     getset_defs[field_count + j] = .{

@@ -114,8 +114,11 @@ pub const PyMem_RawMalloc = pycall.PyMem_RawMalloc;
 pub const PyMem_RawFree = pycall.PyMem_RawFree;
 
 pub const pz_guard = pycall.pz_guard;
+pub const pz_guard_ssize = pycall.pz_guard_ssize;
+pub const pz_guard_int = pycall.pz_guard_int;
 pub const pz_guard_active = pycall.pz_guard_active;
 pub const pz_panic_longjmp = pycall.pz_panic_longjmp;
+pub const pz_type_name = pycall.pz_type_name;
 
 pub const PyType_FromSpec = pycall.PyType_FromSpec;
 pub const PyType_FromSpecWithBases = pycall.PyType_FromSpecWithBases;

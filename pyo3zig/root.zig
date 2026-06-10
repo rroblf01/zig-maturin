@@ -31,6 +31,7 @@ pub const wrapNamed = funcwrap.wrapNamed;
 pub const wrapMethodNamed = pyclass.wrapMethodNamed;
 pub const wrapMethodKw = pyclass.wrapMethodKw;
 pub const staticMethod = pyclass.staticMethod;
+pub const classMethod = pyclass.classMethod;
 
 pub const PyString = types.PyString;
 pub const PyInt = types.PyInt;

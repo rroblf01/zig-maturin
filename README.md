@@ -84,13 +84,16 @@ Zig error surface as a Python exception.
 | `bool` | `bool` | `bool` |
 | `[]const u8` | `str` / `bytes` (borrowed) | `str` |
 | `?T` | `T` or `None` | `T` or `None` |
-| `[]T`, `[N]T` | — | `list` |
-| tuple struct | — | `tuple` |
-| plain struct | — | `dict` (by field name) |
+| `[]T`, `[N]T` | `list` / `tuple` | `list` |
+| tuple struct | `list` / `tuple` | `tuple` |
+| plain struct | `dict` (by field name; field defaults honored) | `dict` (by field name) |
+| `*MyClass` | an instance of `MyClass` (borrowed) | — |
 | `?*pz.PyObject` | any object | any object (passthrough) |
 
-Container **arguments** (`list` → `[]T`) are on the roadmap; accept `?*pz.PyObject`
-for now and convert manually.
+Conversion is bidirectional: a `list`/`tuple` becomes a `[]T` argument, a `dict`
+becomes a struct argument, and an instance of one of your classes can be passed
+to a function as a `*MyClass` pointer. A type mismatch raises a precise
+`TypeError` (`expected int, got str`).
 
 ### Keyword arguments and defaults
 
@@ -137,8 +140,72 @@ const GreeterClass = pz.PyClass(Greeter, .{
 });
 ```
 
-Register the class in the module's `.classes` field. Supported hooks: `init`,
-`__deinit__`, `__str__`, `__repr__`, `__hash__`, `__eq__`.
+Register the class in the module's `.classes` field.
+
+**Hooks** (declared on the struct): `init`, `__deinit__` (called on GC),
+`__str__`, `__repr__`, `__hash__`, `__eq__`, and the container/iterator
+protocols `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__iter__`,
+`__next__` (a type with `__next__` is automatically its own iterator).
+
+**`PyClass` config:**
+
+```zig
+const Vec2Class = pz.PyClass(Vec2, .{
+    // keyword __init__ with defaults
+    .init_args     = &.{ "x", "y" },
+    .init_defaults = .{ .y = @as(i64, 0) },
+    // computed (read-only) properties
+    .properties = &.{ .{ .name = "length_sq", .get = vec2_length_sq } },
+    .methods = &.{
+        pz.wrapMethodNamed(Vec2, "dot", vec2_dot),         // positional method
+        pz.wrapMethodKw(Vec2, "scale", scale, .{ .args = &.{"k"} }),  // kwargs method
+        pz.staticMethod("dims", vec2_dims),                // @staticmethod
+        pz.classMethod(Vec2, "from_pair", vec2_from_pair), // @classmethod / alt constructor
+    },
+});
+```
+
+A `classMethod` whose Zig function returns `T` (or `!T`) is treated as an
+**alternative constructor**: the returned struct is wrapped into a fresh
+instance, so `Vec2.from_pair(...)` returns a `Vec2`.
+
+### Releasing the GIL
+
+Wrap a long pure-Zig computation in `pz.allowThreads` to release the GIL while
+it runs, so other Python threads make progress:
+
+```zig
+fn heavy_sum(n: i64) i64 {
+    return pz.allowThreads(compute_sum, .{n});
+}
+```
+
+### Typed exceptions
+
+Raise a specific built-in (or custom) Python exception, then return any Zig
+error — the framework preserves the one you set instead of remapping it:
+
+```zig
+fn parse_positive(x: i64) !i64 {
+    if (x <= 0) {
+        pz.setError(pz.PyExc_ValueError(), "value must be positive");
+        return error.NotPositive;
+    }
+    return x;
+}
+```
+
+`pz.newException("mymod.MyError", null)` creates a custom exception type.
+
+### Module constants
+
+```zig
+const Mod = pz.pyModule("my_extension", .{
+    .constants = .{ .VERSION = "1.0", .MAX_ITEMS = @as(i64, 100) },
+    .functions = &.{ ... },
+    .classes   = &.{ GreeterClass },
+});
+```
 
 ### Error handling and panics
 

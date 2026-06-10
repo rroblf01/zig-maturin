@@ -29,9 +29,49 @@ PyObject* pz_guard(PyObject* (*fn)(void*), void* ctx) {
     return result;
 }
 
+/* Integer-returning variants for slots whose C signature returns Py_ssize_t
+ * (__len__) or int (__setitem__, __contains__). They share the same jmp_buf
+ * stack as pz_guard and return -1 (CPython's error sentinel) on longjmp; the
+ * panic handler has already set a Python exception before jumping. */
+Py_ssize_t pz_guard_ssize(Py_ssize_t (*fn)(void*), void* ctx) {
+    jmp_buf saved;
+    int saved_active = pz_jmp_active;
+    memcpy(&saved, &pz_jmp, sizeof(jmp_buf));
+    pz_jmp_active = 1;
+    Py_ssize_t result;
+    if (setjmp(pz_jmp)) {
+        result = -1;
+    } else {
+        result = fn(ctx);
+    }
+    pz_jmp_active = saved_active;
+    memcpy(&pz_jmp, &saved, sizeof(jmp_buf));
+    return result;
+}
+
+int pz_guard_int(int (*fn)(void*), void* ctx) {
+    jmp_buf saved;
+    int saved_active = pz_jmp_active;
+    memcpy(&saved, &pz_jmp, sizeof(jmp_buf));
+    pz_jmp_active = 1;
+    int result;
+    if (setjmp(pz_jmp)) {
+        result = -1;
+    } else {
+        result = fn(ctx);
+    }
+    pz_jmp_active = saved_active;
+    memcpy(&pz_jmp, &saved, sizeof(jmp_buf));
+    return result;
+}
+
 int pz_guard_active(void) { return pz_jmp_active; }
 
 void pz_panic_longjmp(void) { longjmp(pz_jmp, 1); }
+
+/* tp_name of an object's type — used to build precise TypeError messages
+ * ("expected int, got str") without reproducing the PyTypeObject layout. */
+const char* pz_type_name(PyObject* o) { return Py_TYPE(o)->tp_name; }
 
 PyObject* pyo3zig_PyExc_TypeError(void) { return PyExc_TypeError; }
 PyObject* pyo3zig_PyExc_ValueError(void) { return PyExc_ValueError; }

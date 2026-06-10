@@ -1,6 +1,7 @@
 const std = @import("std");
 const zm = @import("zig-maturin");
 const refcount = @import("refcount.zig");
+const pycell = @import("pycell.zig");
 
 pub const ConversionError = error{
     PythonTypeError,
@@ -9,6 +10,40 @@ pub const ConversionError = error{
     MemoryError,
     NotImplemented,
 };
+
+/// Python type-hint spelling for a Zig type, used in error messages.
+fn expectedName(comptime T: type) []const u8 {
+    if (T == ?*zm.PyObject or T == *zm.PyObject) return "object";
+    return switch (@typeInfo(T)) {
+        .int => "int",
+        .float => "float",
+        .bool => "bool",
+        .optional => |o| expectedName(o.child),
+        .pointer => |p| if (p.size == .slice and p.child == u8) "str or bytes" else if (p.size == .slice) "list or tuple" else shortName(p.child),
+        .array => "list or tuple",
+        .@"struct" => |s| if (s.is_tuple) "tuple" else "dict",
+        else => shortName(T),
+    };
+}
+
+/// Short (unqualified) name of a type: "pkg.Vec2" -> "Vec2".
+fn shortName(comptime T: type) []const u8 {
+    const full = @typeName(T);
+    const dot = std.mem.lastIndexOfScalar(u8, full, '.');
+    return if (dot) |d| full[d + 1 ..] else full;
+}
+
+/// Set a precise TypeError: "expected <wanted>, got <actual python type>".
+fn raiseTypeError(comptime T: type, obj: ?*zm.PyObject) void {
+    const actual = std.mem.span(zm.pz_type_name(obj));
+    var buf: [192]u8 = undefined;
+    const m = std.fmt.bufPrint(&buf, "expected {s}, got {s}", .{ expectedName(T), actual }) catch {
+        zm.PyErr_SetString(zm.PyExc_TypeError(), "type error");
+        return;
+    };
+    buf[@min(m.len, buf.len - 1)] = 0;
+    zm.PyErr_SetString(zm.PyExc_TypeError(), @as([*:0]const u8, @ptrCast(&buf)));
+}
 
 pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
     const T = @TypeOf(value);
@@ -162,6 +197,7 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                     const val = zm.PyLong_AsLong(obj);
                     if (val == -1 and zm.PyErr_Occurred() != null) {
                         zm.PyErr_Clear();
+                        raiseTypeError(T, obj);
                         return error.PythonTypeError;
                     }
                     return @intCast(val);
@@ -170,6 +206,7 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                     const val = zm.PyLong_AsLongLong(obj);
                     if (val == -1 and zm.PyErr_Occurred() != null) {
                         zm.PyErr_Clear();
+                        raiseTypeError(T, obj);
                         return error.PythonTypeError;
                     }
                     return @intCast(val);
@@ -180,6 +217,7 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                     const val = zm.PyLong_AsUnsignedLongLong(obj);
                     if (val == std.math.maxInt(u64) and zm.PyErr_Occurred() != null) {
                         zm.PyErr_Clear();
+                        raiseTypeError(T, obj);
                         return error.PythonTypeError;
                     }
                     return @intCast(val);
@@ -191,6 +229,7 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
             const val = zm.PyFloat_AsDouble(obj);
             if (val == -1.0 and zm.PyErr_Occurred() != null) {
                 zm.PyErr_Clear();
+                raiseTypeError(T, obj);
                 return error.PythonTypeError;
             }
             return val;
@@ -222,10 +261,14 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                         }
                         return buf[0..@as(usize, @intCast(size))];
                     }
+                    raiseTypeError(T, obj);
                     return error.PythonTypeError;
                 }
                 // list/tuple -> []child (allocated in the per-call arena).
-                const n = seqLen(obj) orelse return error.PythonTypeError;
+                const n = seqLen(obj) orelse {
+                    raiseTypeError(T, obj);
+                    return error.PythonTypeError;
+                };
                 const out = allocator.alloc(info.child, @as(usize, @intCast(n))) catch return error.MemoryError;
                 var i: isize = 0;
                 while (i < n) : (i += 1) {
@@ -234,10 +277,28 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                 }
                 return out;
             }
+            // *T (single pointer) where T is a class struct: borrow the Zig data
+            // backing a live instance of that class. The instance keeps it alive
+            // for the duration of the call.
+            if (info.size == .one) {
+                const ci = @typeInfo(info.child);
+                if (ci == .@"struct" and !@hasDecl(info.child, "borrow")) {
+                    const expected = comptime shortName(info.child);
+                    const actual = std.mem.span(zm.pz_type_name(obj));
+                    if (!std.mem.eql(u8, expected, actual)) {
+                        raiseTypeError(T, obj);
+                        return error.PythonTypeError;
+                    }
+                    return pycell.PyCell(info.child).ptrFromObj(obj);
+                }
+            }
             return error.NotImplemented;
         },
         .array => |info| {
-            const n = seqLen(obj) orelse return error.PythonTypeError;
+            const n = seqLen(obj) orelse {
+                raiseTypeError(T, obj);
+                return error.PythonTypeError;
+            };
             if (n != info.len) return error.PythonValueError;
             var out: T = undefined;
             inline for (0..info.len) |i| {
@@ -249,7 +310,10 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
         .@"struct" => |info| {
             if (@hasDecl(T, "borrow")) return error.NotImplemented; // wrapper types not accepted as args
             if (info.is_tuple) {
-                const n = seqLen(obj) orelse return error.PythonTypeError;
+                const n = seqLen(obj) orelse {
+                    raiseTypeError(T, obj);
+                    return error.PythonTypeError;
+                };
                 if (n != info.fields.len) return error.PythonValueError;
                 var out: T = undefined;
                 inline for (info.fields, 0..) |field, i| {
@@ -259,7 +323,10 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                 return out;
             }
             // dict -> struct keyed by field name; missing keys use struct defaults.
-            if (zm.PyDict_Check(obj) == 0) return error.PythonTypeError;
+            if (zm.PyDict_Check(obj) == 0) {
+                raiseTypeError(T, obj);
+                return error.PythonTypeError;
+            }
             var out: T = undefined;
             inline for (info.fields) |field| {
                 const key = @as([*:0]const u8, @ptrCast(field.name.ptr));

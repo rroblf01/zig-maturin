@@ -119,6 +119,12 @@ const Greeter = extern struct {
         return pz.PyString.init(s);
     }
 
+    pub fn __repr__(self: *Greeter) !pz.PyString {
+        var buf: [64]u8 = undefined;
+        const s = try std.fmt.bufPrint(&buf, "<Greeter val={d}>", .{self.val});
+        return pz.PyString.init(s);
+    }
+
     pub fn __hash__(self: *Greeter) i64 {
         return self.val;
     }
@@ -169,6 +175,18 @@ fn vec2_dims() i64 {
     return 2;
 }
 
+// Class method / alternative constructor: returns a Vec2, which the framework
+// wraps into a new instance of the class.
+fn vec2_from_pair(p: struct { x: i64, y: i64 }) Vec2 {
+    return .{ .x = p.x, .y = p.y };
+}
+
+// Free function that takes a class instance as an argument (*Vec2) and reads
+// its Zig fields directly — no copy, borrowed for the duration of the call.
+fn vec_dot(a: *Vec2, b: *Vec2) i64 {
+    return a.x * b.x + a.y * b.y;
+}
+
 const Vec2Class = pz.PyClass(Vec2, .{
     .init_args = &.{ "x", "y" },
     .init_defaults = .{ .y = @as(i64, 0) },
@@ -181,6 +199,7 @@ const Vec2Class = pz.PyClass(Vec2, .{
             .defaults = .{ .other_y = @as(i64, 0) },
         }),
         pz.staticMethod("dims", vec2_dims),
+        pz.classMethod(Vec2, "from_pair", vec2_from_pair),
         pz.wrapMethodNamed(Vec2, "bad", vec2_bad),
     },
 });
@@ -199,6 +218,9 @@ const Range = extern struct {
         return if (self.stop > self.start) self.stop - self.start else 0;
     }
     pub fn __getitem__(self: *Range, i: i64) i64 {
+        // Demonstrates the panic net on a dunder: a panic here becomes a
+        // Python exception instead of crashing the interpreter.
+        if (i == 99) @panic("bad index");
         return self.start + i;
     }
     pub fn __contains__(self: *Range, v: i64) bool {
@@ -251,6 +273,7 @@ const STUB = pz.moduleStub(.{
     .{ .name = "make_pair", .func = make_pair },
     .{ .name = "sum_list", .func = sum_list, .args = &.{"xs"} },
     .{ .name = "point_sum", .func = point_sum, .args = &.{"p"} },
+    .{ .name = "vec_dot", .func = vec_dot, .args = &.{ "a", "b" } },
     .{ .name = "power", .func = power, .args = &.{ "base", "exp" } },
 });
 
@@ -275,6 +298,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("make_pair", make_pair),
         pz.pyFnNamed("sum_list", sum_list),
         pz.pyFnNamed("point_sum", point_sum),
+        pz.pyFnNamed("vec_dot", vec_dot),
         pz.pyFnNamed("parse_positive", parse_positive),
         pz.pyFnNamed("heavy_sum", heavy_sum),
         pz.pyFnNamed("boom", boom),

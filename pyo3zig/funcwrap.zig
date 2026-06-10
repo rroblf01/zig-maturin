@@ -13,6 +13,9 @@ pub fn paramTypesTupleDirect(comptime params: []const std.builtin.Type.Fn.Param)
 }
 
 pub fn setConversionError(err: conversion.ConversionError) void {
+    // Conversion may already have set a precise message (e.g. "expected int,
+    // got str"); don't overwrite it with the generic fallback.
+    if (zm.PyErr_Occurred() != null) return;
     switch (err) {
         error.PythonTypeError => zm.PyErr_SetString(zm.PyExc_TypeError(), "type conversion error"),
         error.PythonValueError => zm.PyErr_SetString(zm.PyExc_ValueError(), "value conversion error"),
