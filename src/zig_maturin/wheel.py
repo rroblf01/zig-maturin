@@ -27,10 +27,9 @@ def build_wheel(
     wheel_name = f"{module_name}-{version}-{python_tag}-{abi_tag}-{platform_tag}.whl"
     wheel_path = wheel_dir / wheel_name
 
-    if so_path.suffix == ".pyd":
-        so_name = f"{module_name}.pyd"
-    else:
-        so_name = f"{module_name}.so"
+    # Name the extension by the *target* suffix (.pyd on Windows, .so
+    # elsewhere) — the built artifact's own suffix (.dll/.dylib) is irrelevant.
+    so_name = f"{module_name}{so_suffix}"
 
     dist_info = f"{module_name}-{version}.dist-info"
     records: list[str] = []

@@ -35,9 +35,20 @@ pub fn build(b: *std.Build) void {
         .root_module = pyo3zig_example_mod,
     });
     pyo3zig_lib.root_module.link_libc = true;
-    configurePythonLinkage(pyo3zig_lib, target);
 
-    const python_include = getPythonInclude(b);
+    // Optional overrides so the Python tooling (which knows its own sysconfig
+    // paths on every OS) can supply target-correct include/lib locations.
+    // Falls back to `python3-config` on the host when not provided.
+    const py_include = b.option([]const u8, "python-include", "Python include directory");
+    const py_libdir = b.option([]const u8, "python-libdir", "Python library directory (for Windows linking)");
+    const py_lib = b.option([]const u8, "python-lib", "Python import library name, e.g. python312 (Windows)");
+
+    configurePythonLinkage(pyo3zig_lib, target, py_libdir, py_lib);
+
+    const python_include: std.Build.LazyPath = if (py_include) |p|
+        .{ .cwd_relative = p }
+    else
+        getPythonInclude(b);
     pyo3zig_lib.root_module.addIncludePath(python_include);
     pyo3zig_lib.root_module.addCSourceFile(.{ .file = b.path("pyo3zig_capi.c"), .flags = &.{} });
 
@@ -60,13 +71,24 @@ pub fn build(b: *std.Build) void {
 ///   - Windows: PE has no dynamic-lookup equivalent; a `pythonXY.lib` import
 ///     library must be linked. Cross-linking that is out of scope here, so we
 ///     surface a clear note instead of failing cryptically.
-fn configurePythonLinkage(lib: *std.Build.Step.Compile, target: std.Build.ResolvedTarget) void {
+fn configurePythonLinkage(
+    lib: *std.Build.Step.Compile,
+    target: std.Build.ResolvedTarget,
+    py_libdir: ?[]const u8,
+    py_lib: ?[]const u8,
+) void {
     lib.linker_allow_shlib_undefined = true;
     if (target.result.os.tag == .windows) {
-        std.log.warn(
-            "Windows extensions must link python3.lib; provide it via addObjectFile/linkSystemLibrary in your build.zig.",
-            .{},
-        );
+        // PE cannot leave CPython symbols undefined; link the import library.
+        if (py_libdir) |d| lib.root_module.addLibraryPath(.{ .cwd_relative = d });
+        if (py_lib) |l| {
+            lib.root_module.linkSystemLibrary(l, .{});
+        } else {
+            std.log.warn(
+                "Windows target without -Dpython-lib; pass e.g. -Dpython-lib=python312 -Dpython-libdir=<libs>.",
+                .{},
+            );
+        }
     }
 }
 

@@ -4,6 +4,7 @@ import os
 import platform
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 from .config import ZigMaturinConfig, find_project_root
@@ -67,6 +68,42 @@ def target_to_platform_tag(target: str) -> str:
         return f"manylinux_2_28_{plat_arch}"
 
 
+def python_build_options(config: ZigMaturinConfig, target: str) -> list[str]:
+    """`-D` flags telling build.zig where the *target* Python's headers/libs are.
+
+    For a native build (target OS == host OS), `sysconfig` is authoritative on
+    every platform — including Windows, where `python3-config` does not exist.
+    For cross-compilation, the target Python paths must be supplied explicitly
+    via [tool.zig-maturin] (python-include / python-libdir / python-lib).
+    """
+    opts: list[str] = []
+    is_windows_target = "windows" in target
+
+    include = config.python_include or sysconfig.get_paths().get("include", "")
+    if include:
+        opts.append(f"-Dpython-include={include}")
+
+    if is_windows_target:
+        libdir = config.python_libdir
+        lib = config.python_lib
+        if not libdir and sys.platform == "win32":
+            # On Windows, the import library lives in <base>/libs/pythonXY.lib.
+            libdir = str(Path(sys.base_prefix) / "libs")
+        if not lib and sys.platform == "win32":
+            lib = f"python{sys.version_info.major}{sys.version_info.minor}"
+        if libdir:
+            opts.append(f"-Dpython-libdir={libdir}")
+        if lib:
+            opts.append(f"-Dpython-lib={lib}")
+        elif not config.python_lib:
+            print(
+                "Warning: Windows target without python-lib; set "
+                "[tool.zig-maturin] python-libdir/python-lib for cross builds."
+            )
+
+    return opts
+
+
 def target_to_so_suffix(target: str) -> str:
     parts = target.split("-")
     os_part = parts[1] if len(parts) > 1 else "linux"
@@ -104,6 +141,7 @@ def build_project(
             "build",
             f"-Dtarget={target}",
             f"-Doptimize={optimize}",
+            *python_build_options(config, target),
         ]
 
         result = subprocess.run(
@@ -124,31 +162,32 @@ def build_project(
         if result.stderr:
             print(result.stderr, file=sys.stderr)
 
-        lib_dir = root / "zig-out" / "lib"
         mod_name = config.module_path
+        lib_dir = root / "zig-out" / "lib"
+        bin_dir = root / "zig-out" / "bin"
 
-        so_name_candidates = [
-            f"lib{mod_name}.so",
-            f"lib{mod_name}.dylib",
-            f"{mod_name}.dll",
-            f"lib{mod_name}.pdb",
-        ]
+        # Pick the artifact that matches THIS target, not a stale one from a
+        # previous build of a different platform. Zig emits the Windows .dll
+        # under bin/, shared objects under lib/.
+        if "windows" in target:
+            candidates = [bin_dir / f"{mod_name}.dll"]
+        elif "macos" in target or "darwin" in target:
+            candidates = [lib_dir / f"lib{mod_name}.dylib"]
+        else:
+            candidates = [lib_dir / f"lib{mod_name}.so"]
 
-        built_so = None
-        for candidate in so_name_candidates:
-            candidate_path = lib_dir / candidate
-            if candidate_path.exists():
-                built_so = candidate_path
-                break
+        built_so = next((c for c in candidates if c.exists()), None)
 
         if built_so is None:
             print(
-                f"Warning: Could not find compiled shared library in {lib_dir}"
+                f"Warning: Could not find compiled artifact for {target}. "
+                f"Looked for: {', '.join(str(c) for c in candidates)}"
             )
-            print("Contents of zig-out/lib:")
-            if lib_dir.exists():
-                for f in lib_dir.iterdir():
-                    print(f"  {f.name}")
+            for d in (bin_dir, lib_dir):
+                if d.exists():
+                    print(f"Contents of {d}:")
+                    for f in d.iterdir():
+                        print(f"  {f.name}")
             continue
 
         platform_tag = target_to_platform_tag(target)

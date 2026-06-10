@@ -18,6 +18,9 @@ class ZigMaturinConfig:
     license: str = ""
     classifiers: list[str] = field(default_factory=list)
     readme: str = ""
+    python_include: str = ""
+    python_libdir: str = ""
+    python_lib: str = ""
 
     @property
     def module_path(self) -> str:
@@ -66,6 +69,10 @@ def read_config() -> ZigMaturinConfig:
     cfg.module_name = tool_zm.get("module-name", "")
     cfg.python_source = tool_zm.get("python-source", "src")
     cfg.zig_source = tool_zm.get("zig-source", "src/main.zig")
+    # Optional target-Python overrides (needed for cross-compilation).
+    cfg.python_include = tool_zm.get("python-include", "")
+    cfg.python_libdir = tool_zm.get("python-libdir", "")
+    cfg.python_lib = tool_zm.get("python-lib", "")
 
     if not cfg.module_name:
         cfg.module_name = project.get("name", "my_module")

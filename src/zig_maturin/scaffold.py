@@ -57,7 +57,18 @@ pub fn build(b: *std.Build) void {{
     // The high-level pyo3zig layer needs libc, the Python headers, and the
     // C shim that exposes Python's static symbols (PyExc_*, Py_None, ...).
     lib.root_module.link_libc = true;
-    lib.root_module.addIncludePath(getPythonInclude(b));
+
+    // zig-maturin passes these so the *target* Python's paths are used (it
+    // knows them via sysconfig); fall back to python3-config on the host.
+    const py_include = b.option([]const u8, "python-include", "Python include directory");
+    const py_libdir = b.option([]const u8, "python-libdir", "Python library directory (Windows)");
+    const py_lib = b.option([]const u8, "python-lib", "Python import library name (Windows)");
+
+    const include: std.Build.LazyPath = if (py_include) |p|
+        .{{ .cwd_relative = p }}
+    else
+        getPythonInclude(b);
+    lib.root_module.addIncludePath(include);
     lib.root_module.addCSourceFile(.{{
         .file = zm_dep.path("pyo3zig_capi.c"),
         .flags = &.{{}},
@@ -67,7 +78,9 @@ pub fn build(b: *std.Build) void {{
     // they must be left undefined at link time (mandatory on macOS Mach-O).
     lib.linker_allow_shlib_undefined = true;
     if (target.result.os.tag == .windows) {{
-        std.log.warn("Windows extensions must link python3.lib; add it to this build.zig.", .{{}});
+        // PE cannot leave symbols undefined; link the Python import library.
+        if (py_libdir) |d| lib.root_module.addLibraryPath(.{{ .cwd_relative = d }});
+        if (py_lib) |l| lib.root_module.linkSystemLibrary(l, .{{}});
     }}
 
     b.installArtifact(lib);
