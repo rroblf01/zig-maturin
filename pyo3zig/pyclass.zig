@@ -28,7 +28,11 @@ pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime f
     const Cell = pycell.PyCell(T);
 
     const Wrapper = struct {
-        pub fn trampoline(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+        pub fn trampoline(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            if (kwargs != null and zm.PyDict_Size(kwargs) > 0) {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "keyword arguments not supported for method");
+                return null;
+            }
             const return_type = fn_info.return_type;
 
             const self_ptr = Cell.ptrFromObj(self_obj);
@@ -86,8 +90,8 @@ pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime f
 
     return zm.PyMethodDef{
         .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
-        .ml_meth = &Wrapper.trampoline,
-        .ml_flags = zm.METH_VARARGS,
+        .ml_meth = @ptrCast(&Wrapper.trampoline),
+        .ml_flags = zm.METH_VARARGS | zm.METH_KEYWORDS,
         .ml_doc = null,
     };
 }

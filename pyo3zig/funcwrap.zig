@@ -89,17 +89,21 @@ fn wrapFnInner(comptime func: anytype, comptime fn_info: std.builtin.Type.Fn, _:
 pub fn wrap(comptime func: anytype, comptime name: [:0]const u8, comptime doc: [:0]const u8) zm.PyMethodDef {
     const FnType = @TypeOf(func);
     const fn_info = @typeInfo(FnType).@"fn";
-    const flags: c_int = zm.METH_VARARGS;
+    const flags: c_int = zm.METH_VARARGS | zm.METH_KEYWORDS;
 
     const Wrapper = struct {
-        pub fn trampoline(self: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+        pub fn trampoline(self: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            if (kwargs != null and zm.PyDict_Size(kwargs) > 0) {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "keyword arguments not supported");
+                return null;
+            }
             return wrapFnInner(func, fn_info, self, args_obj);
         }
     };
 
     return zm.PyMethodDef{
         .ml_name = name,
-        .ml_meth = &Wrapper.trampoline,
+        .ml_meth = @ptrCast(&Wrapper.trampoline),
         .ml_flags = flags,
         .ml_doc = doc,
     };
