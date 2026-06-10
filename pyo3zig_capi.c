@@ -19,6 +19,7 @@ PyObject* pyo3zig_PyExc_Exception(void) { return PyExc_Exception; }
 PyObject* pyo3zig_Py_None(void) { return Py_None; }
 PyObject* pyo3zig_Py_True(void) { return Py_True; }
 PyObject* pyo3zig_Py_False(void) { return Py_False; }
+PyObject* pyo3zig_Py_NotImplemented(void) { return Py_NotImplemented; }
 
 PyObject* pyo3zig_PyLong_Type(void) { return (PyObject*)&PyLong_Type; }
 PyObject* pyo3zig_PyFloat_Type(void) { return (PyObject*)&PyFloat_Type; }

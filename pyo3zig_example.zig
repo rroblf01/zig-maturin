@@ -41,6 +41,14 @@ const Greeter = extern struct {
         const s = try std.fmt.bufPrint(&buf, "Greeter(val={d})", .{self.val});
         return pz.PyString.init(s);
     }
+
+    pub fn __hash__(self: *Greeter) i64 {
+        return self.val;
+    }
+
+    pub fn __eq__(self: *Greeter, other: *Greeter) bool {
+        return self.val == other.val;
+    }
 };
 
 fn greet_method(self: *Greeter) !pz.PyString {

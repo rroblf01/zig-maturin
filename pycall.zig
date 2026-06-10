@@ -204,6 +204,7 @@ pub extern fn pyo3zig_PyExc_ZeroDivisionError() callconv(.c) ?*PyObject;
 pub extern fn pyo3zig_Py_None() callconv(.c) ?*PyObject;
 pub extern fn pyo3zig_Py_True() callconv(.c) ?*PyObject;
 pub extern fn pyo3zig_Py_False() callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_Py_NotImplemented() callconv(.c) ?*PyObject;
 
 pub fn PyExc_Exception() callconv(.c) ?*PyObject { return pyo3zig_PyExc_Exception(); }
 pub fn PyExc_ValueError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_ValueError(); }
@@ -223,3 +224,4 @@ pub fn PyExc_ZeroDivisionError() callconv(.c) ?*PyObject { return pyo3zig_PyExc_
 pub fn Py_None() callconv(.c) ?*PyObject { return pyo3zig_Py_None(); }
 pub fn Py_True() callconv(.c) ?*PyObject { return pyo3zig_Py_True(); }
 pub fn Py_False() callconv(.c) ?*PyObject { return pyo3zig_Py_False(); }
+pub fn Py_NotImplemented() callconv(.c) ?*PyObject { return pyo3zig_Py_NotImplemented(); }

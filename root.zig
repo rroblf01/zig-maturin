@@ -107,6 +107,7 @@ pub const PyExc_ZeroDivisionError = pycall.PyExc_ZeroDivisionError;
 pub const Py_None = pycall.Py_None;
 pub const Py_True = pycall.Py_True;
 pub const Py_False = pycall.Py_False;
+pub const Py_NotImplemented = pycall.Py_NotImplemented;
 
 pub const PyMem_RawMalloc = pycall.PyMem_RawMalloc;
 pub const PyMem_RawFree = pycall.PyMem_RawFree;
@@ -119,6 +120,8 @@ pub const Py_tp_getset = pytypes.Py_tp_getset;
 pub const Py_tp_methods = pytypes.Py_tp_methods;
 pub const Py_tp_str = pytypes.Py_tp_str;
 pub const Py_tp_repr = pytypes.Py_tp_repr;
+pub const Py_tp_hash = pytypes.Py_tp_hash;
+pub const Py_tp_richcompare = pytypes.Py_tp_richcompare;
 pub const Py_TPFLAGS_DEFAULT = pytypes.Py_TPFLAGS_DEFAULT;
 pub const Py_TPFLAGS_HEAPTYPE = pytypes.Py_TPFLAGS_HEAPTYPE;
 

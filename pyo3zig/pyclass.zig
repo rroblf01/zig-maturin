@@ -120,6 +120,8 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_methods = @hasField(@TypeOf(config), "methods");
     const has_str = @hasDecl(T, "__str__");
     const has_repr = @hasDecl(T, "__repr__");
+    const has_hash = @hasDecl(T, "__hash__");
+    const has_eq = @hasDecl(T, "__eq__");
 
     const DeallocWrapper = struct {
         fn dealloc(obj: ?*zm.PyObject) callconv(.c) void {
@@ -213,6 +215,29 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
+    const HashWrapper = struct {
+        fn hash(self_obj: ?*zm.PyObject) callconv(.c) isize {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const result = T.__hash__(ptr);
+            return @as(isize, @intCast(result));
+        }
+    };
+
+    const RichcompareWrapper = struct {
+        fn richcompare(self_obj: ?*zm.PyObject, other_obj: ?*zm.PyObject, op: c_int) callconv(.c) ?*zm.PyObject {
+            _ = op;
+            if (other_obj == null) return zm.Py_NewRef(zm.Py_NotImplemented());
+            const hdr_self = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(self_obj)));
+            const hdr_other = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(other_obj)));
+            if (hdr_self.ob_type != hdr_other.ob_type) return zm.Py_NewRef(zm.Py_NotImplemented());
+            const self_ptr = Cell.ptrFromObj(self_obj);
+            const other_ptr = Cell.ptrFromObj(other_obj);
+            const result = T.__eq__(self_ptr, other_ptr);
+            if (result) return zm.Py_NewRef(zm.Py_True());
+            return zm.Py_NewRef(zm.Py_False());
+        }
+    };
+
     const TypeBuilder = struct {
         fn getTypeObject() ?*zm.PyObject {
             const fields = comptime std.meta.fields(T);
@@ -279,6 +304,8 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_methods) slot_count += 1;
             if (has_str) slot_count += 1;
             if (has_repr) slot_count += 1;
+            if (has_hash) slot_count += 1;
+            if (has_eq) slot_count += 1;
 
             var slots: [slot_count]zm.PyType_Slot = undefined;
             var slot_idx: usize = 0;
@@ -298,6 +325,14 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
             if (has_repr) {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_repr, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&ReprWrapper.repr))) };
+                slot_idx += 1;
+            }
+            if (has_hash) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_hash, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&HashWrapper.hash))) };
+                slot_idx += 1;
+            }
+            if (has_eq) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_richcompare, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&RichcompareWrapper.richcompare))) };
                 slot_idx += 1;
             }
             slots[slot_idx] = .{ .slot = 0, .pfunc = null };
