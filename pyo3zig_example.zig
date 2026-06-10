@@ -23,7 +23,7 @@ fn greet(name: []const u8) !pz.PyString {
 fn repeat_bytes(data: []const u8, count: u64) !pz.PyBytes {
     const total = data.len * count;
     const result = try std.heap.c_allocator.alloc(u8, total);
-    errdefer std.heap.c_allocator.free(result);
+    defer std.heap.c_allocator.free(result);
     for (0..count) |i| {
         @memcpy(result[i * data.len .. (i + 1) * data.len], data);
     }
