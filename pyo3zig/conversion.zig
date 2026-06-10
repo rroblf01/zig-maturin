@@ -12,6 +12,11 @@ pub const ConversionError = error{
 
 pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
     const T = @TypeOf(value);
+    // Raw object passthrough: the returned reference is transferred to the
+    // caller as-is (the producer is expected to hand over a new reference).
+    if (T == ?*zm.PyObject or T == *zm.PyObject) {
+        return value;
+    }
     switch (@typeInfo(T)) {
         .int => {
             const info = @typeInfo(T).int;
@@ -64,6 +69,13 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
 }
 
 pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
+    // Raw object passthrough: borrow the argument as-is (valid for the call).
+    if (T == ?*zm.PyObject) return obj;
+    if (T == *zm.PyObject) {
+        if (obj) |o| return o;
+        return error.PythonValueError;
+    }
+
     if (obj == null) return error.PythonValueError;
 
     switch (@typeInfo(T)) {

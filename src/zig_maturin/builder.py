@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from .config import ZigMaturinConfig, find_project_root
-from .wheel import build_wheel
+from .wheel import build_wheel, generate_metadata
 
 
 def get_host_target() -> str:
@@ -166,6 +166,9 @@ def build_project(
             platform_tag=platform_tag,
             so_suffix=so_suffix,
             output_dir=out,
+            requires_python=config.requires_python,
+            license=config.license,
+            classifiers=config.classifiers,
         )
         wheels.append(wheel_path)
         print(f"Created wheel: {wheel_path}")
@@ -174,6 +177,66 @@ def build_project(
             install_wheel_develop(wheel_path, mod_name, built_so, so_suffix)
 
     return wheels
+
+
+def build_sdist(config: ZigMaturinConfig, out: str = "dist") -> Path:
+    """Build a PEP 517 source distribution (.tar.gz) for `pip` source builds."""
+    import tarfile
+
+    root = find_project_root()
+    mod_name = config.module_path
+    os.makedirs(out, exist_ok=True)
+
+    base = f"{mod_name}-{config.version}"
+    sdist_path = Path(out) / f"{base}.tar.gz"
+
+    # Files/dirs that make the project buildable from source.
+    candidates = [
+        "pyproject.toml",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+        "LICENSE",
+        config.python_source,
+        str(Path(config.zig_source).parent),
+    ]
+    seen: set[str] = set()
+
+    pkg_info = generate_metadata(
+        mod_name,
+        config.version,
+        config.description,
+        config.authors,
+        requires_python=config.requires_python,
+        license=config.license,
+        classifiers=config.classifiers,
+    )
+
+    def _exclude(info: "tarfile.TarInfo") -> "tarfile.TarInfo | None":
+        parts = Path(info.name).parts
+        if "__pycache__" in parts or info.name.endswith((".pyc", ".pyo")):
+            return None
+        if "zig-out" in parts or ".zig-cache" in parts:
+            return None
+        return info
+
+    with tarfile.open(sdist_path, "w:gz") as tar:
+        for rel in candidates:
+            src = root / rel
+            if not src.exists() or rel in seen:
+                continue
+            seen.add(rel)
+            tar.add(src, arcname=f"{base}/{rel}", filter=_exclude)
+
+        info = tarfile.TarInfo(name=f"{base}/PKG-INFO")
+        data = pkg_info.encode()
+        info.size = len(data)
+        import io
+
+        tar.addfile(info, io.BytesIO(data))
+
+    print(f"Created sdist: {sdist_path}")
+    return sdist_path
 
 
 def install_wheel_develop(

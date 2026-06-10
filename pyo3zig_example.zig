@@ -13,6 +13,11 @@ fn double(x: f64) f64 {
     return x * 2.0;
 }
 
+// Raw object passthrough: accepts and returns any Python object.
+fn identity(obj: ?*pz.PyObject) ?*pz.PyObject {
+    return pz.Py_NewRef(obj);
+}
+
 fn greet(name: []const u8) !pz.PyString {
     var buf: [256]u8 = undefined;
     const s = try std.fmt.bufPrint(&buf, "Hello, {s}!", .{name});
@@ -78,10 +83,12 @@ fn get_deinit_count() i64 {
 }
 
 const Mod = pz.pyModule("pyo3zig_demo", .{
+    .doc = "Demo module built with pyo3zig.",
     .functions = &[_]pz.PyMethodDef{
         pz.pyFnNamed("hello", hello),
         pz.pyFnNamed("add", add),
         pz.pyFnNamed("double", double),
+        pz.pyFnNamed("identity", identity),
         pz.pyFnNamed("greet", greet),
         pz.pyFnNamed("repeat_bytes", repeat_bytes),
         pz.pyFnNamed("get_deinit_count", get_deinit_count),

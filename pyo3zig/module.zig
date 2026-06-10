@@ -22,10 +22,14 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
                 zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
                 return null;
             };
+            const doc: ?[*:0]const u8 = if (@hasField(@TypeOf(config), "doc"))
+                @as([*:0]const u8, @ptrCast(config.doc.ptr))
+            else
+                null;
             mod_ptr.* = zm.PyModuleDef{
                 .m_base = zm.PyModuleDef_HEAD_INIT,
                 .m_name = name,
-                .m_doc = null,
+                .m_doc = doc,
                 .m_size = -1,
                 .m_methods = @as(?[*]zm.PyMethodDef, @ptrCast(methods.ptr)),
                 .m_slots = null,

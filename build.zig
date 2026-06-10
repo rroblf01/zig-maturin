@@ -35,6 +35,7 @@ pub fn build(b: *std.Build) void {
         .root_module = pyo3zig_example_mod,
     });
     pyo3zig_lib.root_module.link_libc = true;
+    configurePythonLinkage(pyo3zig_lib, target);
 
     const python_include = getPythonInclude(b);
     pyo3zig_lib.root_module.addIncludePath(python_include);
@@ -49,6 +50,24 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addSystemCommand(&.{ "sh", "-c", copy_cmd });
     run_tests.step.dependOn(b.getInstallStep());
     test_step.dependOn(&run_tests.step);
+}
+
+/// Python extension modules resolve CPython's symbols (PyExc_*, PyLong_*, ...)
+/// against the interpreter at import time. The linker must therefore be told to
+/// leave those symbols undefined:
+///   - ELF (Linux): allowed by default, but make it explicit.
+///   - Mach-O (macOS): requires `-undefined dynamic_lookup`.
+///   - Windows: PE has no dynamic-lookup equivalent; a `pythonXY.lib` import
+///     library must be linked. Cross-linking that is out of scope here, so we
+///     surface a clear note instead of failing cryptically.
+fn configurePythonLinkage(lib: *std.Build.Step.Compile, target: std.Build.ResolvedTarget) void {
+    lib.linker_allow_shlib_undefined = true;
+    if (target.result.os.tag == .windows) {
+        std.log.warn(
+            "Windows extensions must link python3.lib; provide it via addObjectFile/linkSystemLibrary in your build.zig.",
+            .{},
+        );
+    }
 }
 
 fn getPythonInclude(b: *std.Build) std.Build.LazyPath {

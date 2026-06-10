@@ -14,6 +14,10 @@ class ZigMaturinConfig:
     version: str = "0.1.0"
     description: str = ""
     authors: list[dict[str, str]] = field(default_factory=list)
+    requires_python: str = ""
+    license: str = ""
+    classifiers: list[str] = field(default_factory=list)
+    readme: str = ""
 
     @property
     def module_path(self) -> str:
@@ -42,6 +46,21 @@ def read_config() -> ZigMaturinConfig:
     cfg.version = project.get("version", "0.1.0")
     cfg.description = project.get("description", "")
     cfg.authors = project.get("authors", [])
+    cfg.requires_python = project.get("requires-python", "")
+    cfg.classifiers = project.get("classifiers", [])
+
+    # license may be a string (PEP 639) or a {text=...}/{file=...} table.
+    lic = project.get("license", "")
+    if isinstance(lic, dict):
+        cfg.license = lic.get("text", "")
+    else:
+        cfg.license = lic
+
+    readme = project.get("readme", "")
+    if isinstance(readme, dict):
+        cfg.readme = readme.get("text", "")
+    else:
+        cfg.readme = readme
 
     tool_zm = data.get("tool", {}).get("zig-maturin", {})
     cfg.module_name = tool_zm.get("module-name", "")

@@ -3,7 +3,7 @@ import click
 
 from . import __version__
 from .scaffold import scaffold_project
-from .builder import build_project
+from .builder import build_project, build_sdist
 from .config import read_config
 
 
@@ -42,6 +42,18 @@ def build(target, release, out):
     """Build the Zig extension and package it into a wheel."""
     config = read_config()
     build_project(config, target, release, out)
+
+
+@main.command()
+@click.option(
+    "--out",
+    default="dist",
+    help="Output directory for the sdist (default: dist)",
+)
+def sdist(out):
+    """Build a source distribution (.tar.gz)."""
+    config = read_config()
+    build_sdist(config, out)
 
 
 @main.command()

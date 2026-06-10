@@ -63,6 +63,13 @@ pub fn build(b: *std.Build) void {{
         .flags = &.{{}},
     }});
 
+    // CPython symbols are resolved against the interpreter at import time, so
+    // they must be left undefined at link time (mandatory on macOS Mach-O).
+    lib.linker_allow_shlib_undefined = true;
+    if (target.result.os.tag == .windows) {{
+        std.log.warn("Windows extensions must link python3.lib; add it to this build.zig.", .{{}});
+    }}
+
     b.installArtifact(lib);
 }}
 

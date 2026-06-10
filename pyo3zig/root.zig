@@ -35,6 +35,13 @@ pub const PyObjectRef = refcount.PyObjectRef;
 pub const toPyObject = conversion.toPyObject;
 pub const fromPyObject = conversion.fromPyObject;
 
+pub const Py_NewRef = zm.Py_NewRef;
+pub const Py_INCREF = zm.Py_INCREF;
+pub const Py_DECREF = zm.Py_DECREF;
+pub const Py_XINCREF = zm.Py_XINCREF;
+pub const Py_XDECREF = zm.Py_XDECREF;
+pub const Py_None = zm.Py_None;
+
 pub const PyObject = zm.PyObject;
 pub const PyMethodDef = zm.PyMethodDef;
 pub const PyModuleDef = zm.PyModuleDef;

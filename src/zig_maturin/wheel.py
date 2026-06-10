@@ -17,6 +17,9 @@ def build_wheel(
     platform_tag: str,
     so_suffix: str,
     output_dir: str = "dist",
+    requires_python: str = "",
+    license: str = "",
+    classifiers: list[str] | None = None,
 ) -> Path:
     wheel_dir = Path(output_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
@@ -39,7 +42,15 @@ def build_wheel(
         )
         records.append((f"{dist_info}/WHEEL", True))
 
-        metadata = generate_metadata(module_name, version, description, authors)
+        metadata = generate_metadata(
+            module_name,
+            version,
+            description,
+            authors,
+            requires_python=requires_python,
+            license=license,
+            classifiers=classifiers or [],
+        )
         zf.writestr(f"{dist_info}/METADATA", metadata)
         records.append((f"{dist_info}/METADATA", True))
 
@@ -89,6 +100,9 @@ def generate_metadata(
     version: str,
     description: str,
     authors: list[dict[str, str]],
+    requires_python: str = "",
+    license: str = "",
+    classifiers: list[str] | None = None,
 ) -> str:
     lines = [
         "Metadata-Version: 2.4",
@@ -96,6 +110,12 @@ def generate_metadata(
         f"Version: {version}",
         f"Summary: {description or ''}",
     ]
+    if requires_python:
+        lines.append(f"Requires-Python: {requires_python}")
+    if license:
+        lines.append(f"License: {license}")
+    for classifier in classifiers or []:
+        lines.append(f"Classifier: {classifier}")
     for author in authors:
         name = author.get("name", "")
         email = author.get("email", "")
