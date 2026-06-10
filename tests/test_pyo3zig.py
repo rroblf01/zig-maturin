@@ -104,6 +104,11 @@ check("Greeter greet after set", g.greet() == "Hello, val=99!")
 g2 = m.Greeter(100)
 check("Greeter second instance", g2.greet() == "Hello, val=100!")
 
+# test_str
+g3 = m.Greeter(42)
+check("str(Greeter)", str(g3) == "Greeter(val=42)")
+check("str(Greeter(100))", str(m.Greeter(100)) == "Greeter(val=100)")
+
 # test_kwargs_rejected
 try:
     m.Greeter(42, extra=1)

@@ -36,7 +36,11 @@ const Greeter = extern struct {
         return Greeter{ .val = v };
     }
 
-    // __str__ temporarily removed for debugging
+    pub fn __str__(self: *Greeter) !pz.PyString {
+        var buf: [64]u8 = undefined;
+        const s = try std.fmt.bufPrint(&buf, "Greeter(val={d})", .{self.val});
+        return pz.PyString.init(s);
+    }
 };
 
 fn greet_method(self: *Greeter) !pz.PyString {
