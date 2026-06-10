@@ -78,14 +78,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # x86_64 + ARM64 on Linux and Windows; macOS is Apple Silicon only
-        # (GitHub has no current free Intel macOS runner).
+        # Native build + import test. x86_64 + ARM64 on Linux; macOS Apple
+        # Silicon; Windows x86_64. Windows/ARM64 is covered by the cross-build
+        # job below (zig.exe crashes when run natively on a Windows/ARM host).
         os:
           - ubuntu-latest        # Linux x86_64
           - ubuntu-24.04-arm     # Linux ARM64
           - macos-latest         # macOS ARM64 (Apple Silicon)
           - windows-latest       # Windows x86_64
-          - windows-11-arm       # Windows ARM64
         python-version: ["3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
@@ -107,4 +107,38 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: dist/*.whl
+
+  # Windows/ARM64 wheel, cross-compiled from a Linux x86_64 runner: zig.exe
+  # segfaults when run natively on a Windows/ARM host, and an x86_64 host
+  # cannot run the resulting ARM64 .pyd, so this is build-only (no import).
+  windows-arm-crossbuild:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Install zig-maturin
+        run: pip install .
+      - name: Fetch target (ARM64) Python headers + import lib
+        id: pyarm
+        run: python ci/fetch_windows_python.py ${{ matrix.python-version }} arm-python >> "$GITHUB_OUTPUT"
+      - name: Cross-build Windows ARM64 wheel
+        run: |
+          zig-maturin build --target aarch64-windows-gnu \
+            --python-include "${{ steps.pyarm.outputs.include }}" \
+            --python-libdir "${{ steps.pyarm.outputs.libdir }}" \
+            --python-lib "${{ steps.pyarm.outputs.lib }}" \
+            --out dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-windows-arm64-py${{ matrix.python-version }}
           path: dist/*.whl

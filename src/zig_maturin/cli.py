@@ -37,9 +37,30 @@ def scaffold(project_name, path):
     default="dist",
     help="Output directory for wheel files (default: dist)",
 )
-def build(target, release, out):
+@click.option(
+    "--python-include",
+    default=None,
+    help="Target Python include directory (for cross-compilation)",
+)
+@click.option(
+    "--python-libdir",
+    default=None,
+    help="Target Python library directory, e.g. <prefix>/libs (Windows cross)",
+)
+@click.option(
+    "--python-lib",
+    default=None,
+    help="Target Python import library name, e.g. python312 (Windows cross)",
+)
+def build(target, release, out, python_include, python_libdir, python_lib):
     """Build the Zig extension and package it into a wheel."""
     config = read_config()
+    if python_include:
+        config.python_include = python_include
+    if python_libdir:
+        config.python_libdir = python_libdir
+    if python_lib:
+        config.python_lib = python_lib
     build_project(config, target, release, out)
 
 
