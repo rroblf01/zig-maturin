@@ -223,6 +223,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 const method_count = methods.len + 1;
                 const method_defs = std.heap.c_allocator.alloc(zm.PyMethodDef, method_count) catch {
                     zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
+                    zm.PyMem_RawFree(getset_ptr);
                     return null;
                 };
                 for (methods, 0..) |m, i| {
@@ -246,7 +247,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     .slots = &slots,
                 };
 
-                return zm.PyType_FromSpec(&spec);
+                const result = zm.PyType_FromSpec(&spec);
+                if (result == null) {
+                    zm.PyMem_RawFree(getset_ptr);
+                    std.heap.c_allocator.free(method_defs);
+                }
+                return result;
             } else {
                 var slots = [_]zm.PyType_Slot{
                     .{ .slot = zm.Py_tp_dealloc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DeallocWrapper.dealloc))) },
@@ -263,7 +269,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     .slots = &slots,
                 };
 
-                return zm.PyType_FromSpec(&spec);
+                const result = zm.PyType_FromSpec(&spec);
+                if (result == null) {
+                    zm.PyMem_RawFree(getset_ptr);
+                }
+                return result;
             }
         }
     };
