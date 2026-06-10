@@ -3,6 +3,7 @@ const zm = @import("zig-maturin");
 const pycell = @import("pycell.zig");
 const funcwrap = @import("funcwrap.zig");
 const conversion = @import("conversion.zig");
+const errors = @import("errors.zig");
 
 fn buildTypeName(comptime T: type) [*:0]const u8 {
     const full = @typeName(T);
@@ -15,6 +16,77 @@ pub fn wrapMethod(comptime name: [:0]const u8, comptime func: anytype) zm.PyMeth
     return .{
         .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
         .ml_meth = @ptrCast(&func),
+        .ml_flags = zm.METH_VARARGS,
+        .ml_doc = null,
+    };
+}
+
+pub fn wrapMethodNamed(comptime T: type, comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
+    const FnType = @TypeOf(func);
+    const fn_info = @typeInfo(FnType).@"fn";
+    const func_params = fn_info.params;
+    const Cell = pycell.PyCell(T);
+
+    const Wrapper = struct {
+        pub fn trampoline(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            const return_type = fn_info.return_type;
+
+            const self_ptr = Cell.ptrFromObj(self_obj);
+            const method_params = func_params[1..];
+
+            if (args_obj) |args| {
+                const expected = @as(isize, @intCast(method_params.len));
+                const actual = zm.PyTuple_Size(args);
+                if (actual != expected) {
+                    var buf: [128]u8 = std.mem.zeroes([128]u8);
+                    const msg = std.fmt.bufPrint(&buf, "expected {d} arguments, got {d}", .{ expected, actual }) catch "argument count mismatch";
+                    const end = @min(msg.len, buf.len - 1);
+                    buf[end] = 0;
+                    zm.PyErr_SetString(zm.PyExc_TypeError(), @ptrCast(&buf));
+                    return null;
+                }
+
+                const TupleType = funcwrap.paramTypesTupleDirect(method_params);
+                var call_args: TupleType = undefined;
+
+                inline for (method_params, 0..) |param, i| {
+                    const ParamT = param.type.?;
+                    const arg_obj = zm.PyTuple_GetItem(args, @as(isize, @intCast(i)));
+                    call_args[i] = conversion.fromPyObject(ParamT, arg_obj) catch |err| {
+                        funcwrap.setConversionError(err);
+                        return null;
+                    };
+                }
+
+                if (return_type) |ret| {
+                    if (ret == void) {
+                        @call(.auto, func, .{self_ptr} ++ call_args);
+                        return zm.Py_NewRef(zm.Py_None());
+                    }
+                    const ret_info = @typeInfo(ret);
+                    if (ret_info == .error_union) {
+                        const result = @call(.auto, func, .{self_ptr} ++ call_args) catch |err| {
+                            errors.setPyException(err);
+                            return null;
+                        };
+                        return funcwrap.returnToPyObjectValue(result);
+                    }
+                    const result = @call(.auto, func, .{self_ptr} ++ call_args);
+                    return funcwrap.returnToPyObjectValue(result);
+                } else {
+                    @call(.auto, func, .{self_ptr} ++ call_args);
+                    return zm.Py_NewRef(zm.Py_None());
+                }
+            } else {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "no arguments tuple");
+                return null;
+            }
+        }
+    };
+
+    return zm.PyMethodDef{
+        .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
+        .ml_meth = &Wrapper.trampoline,
         .ml_flags = zm.METH_VARARGS,
         .ml_doc = null,
     };

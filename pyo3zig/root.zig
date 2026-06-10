@@ -20,6 +20,7 @@ pub const pyFnNamed = funcwrap.pyFnNamed;
 pub const wrap = funcwrap.wrap;
 pub const wrapNamed = funcwrap.wrapNamed;
 pub const wrapMethod = pyclass.wrapMethod;
+pub const wrapMethodNamed = pyclass.wrapMethodNamed;
 
 pub const PyString = types.PyString;
 pub const PyInt = types.PyInt;

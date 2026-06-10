@@ -1,5 +1,4 @@
 const std = @import("std");
-const zm = @import("zig-maturin");
 const pz = @import("pyo3zig");
 
 fn hello() []const u8 {
@@ -38,16 +37,15 @@ const Greeter = extern struct {
     }
 };
 
-fn greet_meth(self_obj: ?*zm.PyObject, _: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
-    const greeter = GreeterClass.pycell.ptrFromObj(self_obj);
+fn greet_method(self: *Greeter) !pz.PyString {
     var buf: [256]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, "Hello, val={d}!", .{greeter.val}) catch return null;
-    return zm.PyUnicode_FromStringAndSize(s.ptr, @as(isize, @intCast(s.len)));
+    const s = try std.fmt.bufPrint(&buf, "Hello, val={d}!", .{self.val});
+    return pz.PyString.init(s);
 }
 
 const GreeterClass = pz.PyClass(Greeter, .{
     .methods = &[_]pz.PyMethodDef{
-        pz.wrapMethod("greet", greet_meth),
+        pz.wrapMethodNamed(Greeter, "greet", greet_method),
     },
 });
 
