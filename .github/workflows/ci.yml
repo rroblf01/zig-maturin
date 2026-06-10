@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Pinned to the Zig version the project is tested against.
 env:
   ZIG_VERSION: "0.16.0"
@@ -60,7 +68,7 @@ jobs:
       - name: Install package + dev deps
         run: pip install ".[dev]"
       - name: Run tooling tests
-        run: pytest tests/test_cli.py tests/test_config.py tests/test_wheel.py tests/test_builder.py -v
+        run: pytest -v
 
   # The real cross-platform proof: build the demo extension with the tool,
   # install the wheel, and import + exercise it natively on each OS/version.

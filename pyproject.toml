@@ -14,7 +14,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python",
-    "Programming Language :: Zig",
     "Topic :: Software Development :: Build Tools",
 ]
 
@@ -37,3 +36,9 @@ build-backend = "uv_build"
 module-name = "pyo3zig_demo"
 python-source = "src"
 zig-source = "pyo3zig_example.zig"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# test_pyo3zig.py is a standalone runner (top-level sys.exit); run it via
+# `python tests/test_pyo3zig.py` or `zig build test`, not pytest collection.
+addopts = "--ignore=tests/test_pyo3zig.py"
