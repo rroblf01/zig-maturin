@@ -18,8 +18,9 @@ updates:
         patterns:
           - "*"
 
-  # GitHub Actions versions (uses: actions/checkout@vN, etc.). Pin
-  # bumps land alongside ecosystem-wide security advisories.
+  # GitHub Actions versions (uses: actions/checkout@vN, etc.) across ALL
+  # workflow files under .github/workflows/ — both ci.yml and release.yml.
+  # Pin bumps land alongside ecosystem-wide security advisories.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
