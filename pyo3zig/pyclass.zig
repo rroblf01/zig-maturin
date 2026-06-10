@@ -149,6 +149,16 @@ pub fn wrapMethodKw(comptime T: type, comptime name: [:0]const u8, comptime func
     };
 }
 
+const METH_STATIC: c_int = 0x20;
+
+/// A static method (no `self`, no instance) on a class. Register it in the
+/// class's `.methods` list.
+pub fn staticMethod(comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
+    var def = funcwrap.wrap(func, name, "");
+    def.ml_flags |= METH_STATIC;
+    return def;
+}
+
 pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const Cell = pycell.PyCell(T);
     const type_name = buildTypeName(T);
@@ -169,6 +179,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_repr = @hasDecl(T, "__repr__");
     const has_hash = @hasDecl(T, "__hash__");
     const has_eq = @hasDecl(T, "__eq__");
+    const has_len = @hasDecl(T, "__len__");
+    const has_getitem = @hasDecl(T, "__getitem__");
+    const has_setitem = @hasDecl(T, "__setitem__");
+    const has_contains = @hasDecl(T, "__contains__");
+    const has_next = @hasDecl(T, "__next__");
+    const has_iter = @hasDecl(T, "__iter__") or has_next;
 
     const DeallocWrapper = struct {
         fn dealloc(obj: ?*zm.PyObject) callconv(.c) void {
@@ -308,11 +324,108 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
+    const LenWrapper = struct {
+        fn len(self_obj: ?*zm.PyObject) callconv(.c) isize {
+            const ptr = Cell.ptrFromObj(self_obj);
+            return @as(isize, @intCast(T.__len__(ptr)));
+        }
+    };
+
+    const GetItemWrapper = struct {
+        fn getitem(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const fn_info = @typeInfo(@TypeOf(T.__getitem__)).@"fn";
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const key = conversion.fromPyObject(fn_info.params[1].type.?, key_obj, arena.allocator()) catch |err| {
+                funcwrap.setConversionError(err);
+                return null;
+            };
+            return callFuncReturningPyObject(T.__getitem__, fn_info, .{ ptr, key });
+        }
+    };
+
+    const SetItemWrapper = struct {
+        fn setitem(self_obj: ?*zm.PyObject, key_obj: ?*zm.PyObject, val_obj: ?*zm.PyObject) callconv(.c) c_int {
+            const ptr = Cell.ptrFromObj(self_obj);
+            if (val_obj == null) {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "item deletion not supported");
+                return -1;
+            }
+            const fn_info = @typeInfo(@TypeOf(T.__setitem__)).@"fn";
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const a = arena.allocator();
+            const key = conversion.fromPyObject(fn_info.params[1].type.?, key_obj, a) catch |err| {
+                funcwrap.setConversionError(err);
+                return -1;
+            };
+            const value = conversion.fromPyObject(fn_info.params[2].type.?, val_obj, a) catch |err| {
+                funcwrap.setConversionError(err);
+                return -1;
+            };
+            if (@typeInfo(fn_info.return_type orelse void) == .error_union) {
+                T.__setitem__(ptr, key, value) catch |err| {
+                    errors.setPyExceptionIfNeeded(err);
+                    return -1;
+                };
+            } else {
+                T.__setitem__(ptr, key, value);
+            }
+            return 0;
+        }
+    };
+
+    const ContainsWrapper = struct {
+        fn contains(self_obj: ?*zm.PyObject, item_obj: ?*zm.PyObject) callconv(.c) c_int {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const fn_info = @typeInfo(@TypeOf(T.__contains__)).@"fn";
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const item = conversion.fromPyObject(fn_info.params[1].type.?, item_obj, arena.allocator()) catch {
+                return -1;
+            };
+            return if (T.__contains__(ptr, item)) 1 else 0;
+        }
+    };
+
+    const NextWrapper = struct {
+        fn iternext(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const RetT = @typeInfo(@TypeOf(T.__next__)).@"fn".return_type.?;
+            const maybe = if (@typeInfo(RetT) == .error_union)
+                (T.__next__(ptr) catch |err| {
+                    errors.setPyExceptionIfNeeded(err);
+                    return null;
+                })
+            else
+                T.__next__(ptr);
+            // null optional -> StopIteration (return null with no exception set).
+            if (maybe) |v| return funcwrap.returnToPyObjectValue(v);
+            return null;
+        }
+    };
+
+    const IterWrapper = struct {
+        fn iter(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            if (@hasDecl(T, "__iter__")) {
+                const ptr = Cell.ptrFromObj(self_obj);
+                const fn_info = @typeInfo(@TypeOf(T.__iter__)).@"fn";
+                return callFuncReturningPyObject(T.__iter__, fn_info, .{ptr});
+            }
+            // Self-iterator: a type with __next__ is its own iterator.
+            return zm.Py_NewRef(self_obj);
+        }
+    };
+
+    const has_properties = @hasField(@TypeOf(config), "properties");
+
     const TypeBuilder = struct {
         fn getTypeObject() ?*zm.PyObject {
             const fields = comptime std.meta.fields(T);
             const field_count = fields.len;
-            const defs_count = field_count + 1;
+            const prop_count = if (has_properties) config.properties.len else 0;
+            const defs_count = field_count + prop_count + 1;
 
             const getset_ptr = zm.PyMem_RawMalloc(@sizeOf(zm.PyGetSetDef) * defs_count);
             if (getset_ptr == null) {
@@ -364,6 +477,38 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 };
             }
 
+            // Computed properties: .properties = &.{ .{ .name="area", .get=fn, .set=fn? } }
+            if (has_properties) {
+                inline for (config.properties, 0..) |prop, j| {
+                    const has_set = @hasField(@TypeOf(prop), "set");
+                    const PropWrapper = struct {
+                        fn getter(obj: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+                            const ptr = Cell.ptrFromObj(obj);
+                            const gi = @typeInfo(@TypeOf(prop.get)).@"fn";
+                            return callFuncReturningPyObject(prop.get, gi, .{ptr});
+                        }
+                        fn setter(obj: ?*zm.PyObject, val: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) c_int {
+                            const ptr = Cell.ptrFromObj(obj);
+                            const set_params = @typeInfo(@TypeOf(prop.set)).@"fn".params;
+                            const ValT = set_params[1].type.?;
+                            const converted = conversion.fromPyObject(ValT, val, std.heap.c_allocator) catch {
+                                zm.PyErr_SetString(zm.PyExc_TypeError(), "type mismatch for property");
+                                return -1;
+                            };
+                            prop.set(ptr, converted);
+                            return 0;
+                        }
+                    };
+                    getset_defs[field_count + j] = .{
+                        .name = @as([*:0]const u8, @ptrCast(prop.name.ptr)),
+                        .get = &PropWrapper.getter,
+                        .set = if (has_set) &PropWrapper.setter else null,
+                        .doc = null,
+                        .closure = null,
+                    };
+                }
+            }
+
             var method_defs: []zm.PyMethodDef = &.{};
             if (has_methods) {
                 const methods = config.methods;
@@ -385,6 +530,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_repr) slot_count += 1;
             if (has_hash) slot_count += 1;
             if (has_eq) slot_count += 1;
+            if (has_len) slot_count += 1;
+            if (has_getitem) slot_count += 1;
+            if (has_setitem) slot_count += 1;
+            if (has_contains) slot_count += 1;
+            if (has_next) slot_count += 1;
+            if (has_iter) slot_count += 1;
 
             var slots: [slot_count]zm.PyType_Slot = undefined;
             var slot_idx: usize = 0;
@@ -412,6 +563,30 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
             if (has_eq) {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_richcompare, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&RichcompareWrapper.richcompare))) };
+                slot_idx += 1;
+            }
+            if (has_len) {
+                slots[slot_idx] = .{ .slot = zm.Py_sq_length, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&LenWrapper.len))) };
+                slot_idx += 1;
+            }
+            if (has_getitem) {
+                slots[slot_idx] = .{ .slot = zm.Py_mp_subscript, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&GetItemWrapper.getitem))) };
+                slot_idx += 1;
+            }
+            if (has_setitem) {
+                slots[slot_idx] = .{ .slot = zm.Py_mp_ass_subscript, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&SetItemWrapper.setitem))) };
+                slot_idx += 1;
+            }
+            if (has_contains) {
+                slots[slot_idx] = .{ .slot = zm.Py_sq_contains, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&ContainsWrapper.contains))) };
+                slot_idx += 1;
+            }
+            if (has_iter) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_iter, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&IterWrapper.iter))) };
+                slot_idx += 1;
+            }
+            if (has_next) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_iternext, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NextWrapper.iternext))) };
                 slot_idx += 1;
             }
             slots[slot_idx] = .{ .slot = 0, .pfunc = null };

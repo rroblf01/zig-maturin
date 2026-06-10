@@ -12,6 +12,11 @@ pub extern fn pz_guard(
 pub extern fn pz_guard_active() callconv(.c) c_int;
 pub extern fn pz_panic_longjmp() callconv(.c) noreturn;
 
+// GIL release for long Zig-only computations.
+pub const PyThreadState = opaque {};
+pub extern fn PyEval_SaveThread() callconv(.c) ?*PyThreadState;
+pub extern fn PyEval_RestoreThread(?*PyThreadState) callconv(.c) void;
+
 // Module creation
 pub extern fn PyModule_Create2(?*PyModuleDef, c_int) callconv(.c) ?*PyObject;
 pub fn PyModule_Create(def: ?*PyModuleDef) ?*PyObject {

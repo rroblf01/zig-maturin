@@ -58,6 +58,14 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
                 // []T (T != u8) -> Python list.
                 return sliceToList(value);
             }
+            // String literal: *const [N:0]u8 -> str.
+            if (info.size == .one) {
+                const child_info = @typeInfo(info.child);
+                if (child_info == .array and child_info.array.child == u8) {
+                    const s: []const u8 = value;
+                    return zm.PyUnicode_FromStringAndSize(s.ptr, @as(isize, @intCast(s.len)));
+                }
+            }
             return error.NotImplemented;
         },
         .array => {

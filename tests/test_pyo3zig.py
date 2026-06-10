@@ -78,6 +78,38 @@ except ValueError as e:
 except Exception as e:
     check("parse_positive raises ValueError", False, f"wrong type {type(e).__name__}")
 
+# test_class_kwargs
+v0 = m.Vec2(3)
+check("Vec2 init default y", v0.x == 3 and v0.y == 0)
+v1 = m.Vec2(x=3, y=4)
+check("Vec2 init kwargs", v1.x == 3 and v1.y == 4)
+check("Vec2.dot positional", v1.dot(1, 2) == 11)
+check("Vec2.dot kwarg default", v1.dot(other_x=2) == 6)
+check("Vec2.length_sq property", v1.length_sq == 25)
+check("Vec2.dims staticmethod", m.Vec2.dims() == 2)
+try:
+    v1.length_sq = 99
+    check("length_sq read-only", False, "no error")
+except AttributeError:
+    check("length_sq read-only", True)
+
+# test_protocols
+r = m.Range(0, 5)
+check("len(Range)", len(r) == 5)
+check("Range[2]", r[2] == 2)
+check("3 in Range", (3 in r) is True)
+check("10 not in Range", (10 in r) is False)
+check("list(Range)", list(m.Range(0, 3)) == [0, 1, 2])
+check("sum(Range)", sum(m.Range(0, 4)) == 6)
+
+# test_gil_release
+check("heavy_sum(1000)", m.heavy_sum(1000) == 499500)
+
+# test_module_constants
+check("VERSION constant", m.VERSION == "0.2.0")
+check("MAX_ITEMS constant", m.MAX_ITEMS == 100)
+check("PI constant", abs(m.PI - 3.14159) < 1e-9)
+
 # test_kwargs_and_defaults
 check("power default exp", m.power(3) == 9)
 check("power positional", m.power(2, 10) == 1024)

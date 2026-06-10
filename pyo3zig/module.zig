@@ -1,5 +1,6 @@
 const std = @import("std");
 const zm = @import("zig-maturin");
+const conversion = @import("conversion.zig");
 
 pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
     return struct {
@@ -54,6 +55,24 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
                     allocator.free(methods);
                     allocator.destroy(mod_ptr);
                     return null;
+                }
+            }
+
+            // Module-level constants: .constants = .{ .VERSION = "1.0", .MAX = 100 }
+            if (@hasField(@TypeOf(config), "constants")) {
+                const consts = config.constants;
+                inline for (std.meta.fields(@TypeOf(consts))) |field| {
+                    const val_obj = conversion.toPyObject(@field(consts, field.name)) catch {
+                        zm.PyErr_SetString(zm.PyExc_RuntimeError(), "failed to convert module constant");
+                        zm.Py_XDECREF(m);
+                        return null;
+                    };
+                    const cname = @as([*:0]const u8, @ptrCast(field.name.ptr));
+                    if (zm.PyModule_AddObject(m, cname, val_obj) != 0) {
+                        zm.Py_XDECREF(val_obj);
+                        zm.Py_XDECREF(m);
+                        return null;
+                    }
                 }
             }
 

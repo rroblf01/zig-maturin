@@ -133,6 +133,9 @@ pub const PyObject_CallFunction = pycall.PyObject_CallFunction;
 
 pub const PyGILState_Ensure = pycall.PyGILState_Ensure;
 pub const PyGILState_Release = pycall.PyGILState_Release;
+pub const PyThreadState = pycall.PyThreadState;
+pub const PyEval_SaveThread = pycall.PyEval_SaveThread;
+pub const PyEval_RestoreThread = pycall.PyEval_RestoreThread;
 
 pub const PyUnicode_DecodeUTF8 = pycall.PyUnicode_DecodeUTF8;
 
@@ -152,6 +155,12 @@ pub const Py_tp_str = pytypes.Py_tp_str;
 pub const Py_tp_repr = pytypes.Py_tp_repr;
 pub const Py_tp_hash = pytypes.Py_tp_hash;
 pub const Py_tp_richcompare = pytypes.Py_tp_richcompare;
+pub const Py_tp_iter = pytypes.Py_tp_iter;
+pub const Py_tp_iternext = pytypes.Py_tp_iternext;
+pub const Py_sq_length = pytypes.Py_sq_length;
+pub const Py_sq_contains = pytypes.Py_sq_contains;
+pub const Py_mp_subscript = pytypes.Py_mp_subscript;
+pub const Py_mp_ass_subscript = pytypes.Py_mp_ass_subscript;
 pub const Py_TPFLAGS_DEFAULT = pytypes.Py_TPFLAGS_DEFAULT;
 pub const Py_TPFLAGS_HEAPTYPE = pytypes.Py_TPFLAGS_HEAPTYPE;
 

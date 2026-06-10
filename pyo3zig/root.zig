@@ -30,6 +30,7 @@ pub const wrap = funcwrap.wrap;
 pub const wrapNamed = funcwrap.wrapNamed;
 pub const wrapMethodNamed = pyclass.wrapMethodNamed;
 pub const wrapMethodKw = pyclass.wrapMethodKw;
+pub const staticMethod = pyclass.staticMethod;
 
 pub const PyString = types.PyString;
 pub const PyInt = types.PyInt;
@@ -51,6 +52,7 @@ pub const PyExc_OverflowError = zm.PyExc_OverflowError;
 pub const PyExc_ZeroDivisionError = zm.PyExc_ZeroDivisionError;
 
 pub const GILGuard = gil.GILGuard;
+pub const allowThreads = gil.allowThreads;
 pub const PyObjectRef = refcount.PyObjectRef;
 pub const toPyObject = conversion.toPyObject;
 pub const fromPyObject = conversion.fromPyObject;
