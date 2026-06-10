@@ -13,6 +13,8 @@ pub extern fn PyModule_New([*:0]const u8) callconv(.c) ?*PyObject;
 pub extern fn PyModule_AddObject(?*PyObject, [*:0]const u8, ?*PyObject) callconv(.c) c_int;
 pub extern fn PyModule_AddIntConstant(?*PyObject, [*:0]const u8, c_long) callconv(.c) c_int;
 pub extern fn PyModule_AddStringConstant(?*PyObject, [*:0]const u8, [*:0]const u8) callconv(.c) c_int;
+pub extern fn PyModule_AddFunctions(?*PyObject, ?[*]pytypes.PyMethodDef) callconv(.c) c_int;
+pub extern fn PyModuleDef_Init(?*PyModuleDef) callconv(.c) ?*PyObject;
 
 // Reference counting
 pub extern fn Py_INCREF(?*PyObject) callconv(.c) void;
@@ -52,12 +54,26 @@ pub fn Py_RETURN_NONE() callconv(.c) ?*PyObject {
     return Py_NewRef(Py_None);
 }
 
+// GIL management
+pub extern fn PyGILState_Ensure() callconv(.c) c_int;
+pub extern fn PyGILState_Release(c_int) callconv(.c) void;
+
+// Type creation
+pub extern fn PyType_FromSpec(?*pytypes.PyType_Spec) callconv(.c) ?*PyObject;
+pub extern fn PyType_FromSpecWithBases(?*pytypes.PyType_Spec, ?*PyObject) callconv(.c) ?*PyObject;
+pub extern fn PyType_Ready(?*PyObject) callconv(.c) c_int;
+
+// Memory allocation
+pub extern fn PyMem_RawMalloc(usize) callconv(.c) ?*anyopaque;
+pub extern fn PyMem_RawFree(?*anyopaque) callconv(.c) void;
+
 // Exception handling
 pub extern fn PyErr_SetString(?*PyObject, [*:0]const u8) callconv(.c) void;
 pub extern fn PyErr_SetObject(?*PyObject, ?*PyObject) callconv(.c) void;
 pub extern fn PyErr_Occurred() callconv(.c) ?*PyObject;
 pub extern fn PyErr_Clear() callconv(.c) void;
 pub extern fn PyErr_Format(?*PyObject, [*:0]const u8, ...) callconv(.c) ?*PyObject;
+pub extern fn PyErr_NewException([*:0]const u8, ?*PyObject, ?*PyObject) callconv(.c) ?*PyObject;
 
 // Object utilities
 pub extern fn PyObject_GetAttrString(?*PyObject, [*:0]const u8) callconv(.c) ?*PyObject;
@@ -112,6 +128,11 @@ pub const PyExc_AttributeError = @extern(?*PyObject, .{ .name = "PyExc_Attribute
 pub const PyExc_KeyError = @extern(?*PyObject, .{ .name = "PyExc_KeyError" });
 pub const PyExc_IndexError = @extern(?*PyObject, .{ .name = "PyExc_IndexError" });
 pub const PyExc_OSError = @extern(?*PyObject, .{ .name = "PyExc_OSError" });
+pub const PyExc_MemoryError = @extern(?*PyObject, .{ .name = "PyExc_MemoryError" });
+pub const PyExc_OverflowError = @extern(?*PyObject, .{ .name = "PyExc_OverflowError" });
+pub const PyExc_NotImplementedError = @extern(?*PyObject, .{ .name = "PyExc_NotImplementedError" });
+pub const PyExc_SystemError = @extern(?*PyObject, .{ .name = "PyExc_SystemError" });
+pub const PyExc_ZeroDivisionError = @extern(?*PyObject, .{ .name = "PyExc_ZeroDivisionError" });
 
 // Singletons
 pub const Py_None = @extern(?*PyObject, .{ .name = "_Py_NoneStruct" });
