@@ -12,7 +12,7 @@ pub fn paramTypesTupleDirect(comptime params: []const std.builtin.Type.Fn.Param)
     return std.meta.Tuple(&types);
 }
 
-fn setConversionError(err: conversion.ConversionError) void {
+pub fn setConversionError(err: conversion.ConversionError) void {
     switch (err) {
         error.PythonTypeError => zm.PyErr_SetString(zm.PyExc_TypeError(), "type conversion error"),
         error.PythonValueError => zm.PyErr_SetString(zm.PyExc_ValueError(), "value conversion error"),
@@ -21,7 +21,7 @@ fn setConversionError(err: conversion.ConversionError) void {
     }
 }
 
-fn returnToPyObjectValue(value: anytype) ?*zm.PyObject {
+pub fn returnToPyObjectValue(value: anytype) ?*zm.PyObject {
     const T = @TypeOf(value);
     if (T == void) {
         return zm.Py_NewRef(zm.Py_None());

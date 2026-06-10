@@ -113,13 +113,23 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject) ConversionError!T {
         },
         .pointer => |info| {
             if (info.size == .slice and info.child == u8) {
-                if (zm.PyUnicode_Check(obj) == 0) return error.PythonTypeError;
-                const c_str_opt = zm.PyUnicode_AsUTF8(obj);
-                if (c_str_opt) |c_str| {
-                    const len = std.mem.len(c_str);
-                    return c_str[0..len];
+                if (zm.PyUnicode_Check(obj) != 0) {
+                    const c_str_opt = zm.PyUnicode_AsUTF8(obj);
+                    if (c_str_opt) |c_str| {
+                        const len = std.mem.len(c_str);
+                        return c_str[0..len];
+                    }
+                    return error.PythonValueError;
                 }
-                return error.PythonValueError;
+                if (zm.PyBytes_Check(obj) != 0) {
+                    var buf: [*]u8 = undefined;
+                    var size: isize = undefined;
+                    if (zm.PyBytes_AsStringAndSize(obj, &buf, &size) != 0) {
+                        return error.PythonValueError;
+                    }
+                    return buf[0..@as(usize, @intCast(size))];
+                }
+                return error.PythonTypeError;
             }
             return error.NotImplemented;
         },

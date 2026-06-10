@@ -6,20 +6,24 @@ const conversion = @import("conversion.zig");
 
 fn buildTypeName(comptime T: type) [*:0]const u8 {
     const full = @typeName(T);
-    comptime var buf: [256]u8 = undefined;
-    comptime var len: usize = 0;
-    inline for (full) |c| {
-        if (len >= 255) break;
-        buf[len] = c;
-        len += 1;
-    }
-    buf[len] = 0;
-    return @as([*:0]const u8, @ptrCast(&buf));
+    const dot = std.mem.lastIndexOfScalar(u8, full, '.') orelse 0;
+    const short = if (dot > 0) full[dot+1..] else full;
+    return @as([*:0]const u8, @ptrCast(short.ptr));
 }
 
-pub fn PyClass(comptime T: type) type {
+pub fn wrapMethod(comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
+    return .{
+        .ml_name = @as(?[*:0]const u8, @ptrCast(name.ptr)),
+        .ml_meth = @ptrCast(&func),
+        .ml_flags = zm.METH_VARARGS,
+        .ml_doc = null,
+    };
+}
+
+pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const Cell = pycell.PyCell(T);
     const type_name = buildTypeName(T);
+    const has_methods = @hasField(@TypeOf(config), "methods");
 
     const DeallocWrapper = struct {
         fn dealloc(obj: ?*zm.PyObject) callconv(.c) void {
@@ -75,11 +79,14 @@ pub fn PyClass(comptime T: type) type {
                         };
                     }
 
-                    ptr.* = @call(.auto, init_fn, init_args) catch {
-                        zm.PyErr_SetString(zm.PyExc_RuntimeError(), "init failed");
-                        zm.PyMem_RawFree(alloc);
-                        return null;
-                    };
+                    const InitReturn = @typeInfo(@TypeOf(init_fn)).@"fn".return_type orelse void;
+                    if (InitReturn == void) {
+                        @call(.auto, init_fn, init_args);
+                    } else if (@typeInfo(InitReturn) == .error_union) {
+                        ptr.* = try @call(.auto, init_fn, init_args);
+                    } else {
+                        ptr.* = @call(.auto, init_fn, init_args);
+                    }
                 }
             }
 
@@ -110,7 +117,7 @@ pub fn PyClass(comptime T: type) type {
                     }
                 };
 
-                const field_name = @as([*:0]const u8, @ptrCast(@as([*]const u8, @ptrCast(&field.name))));
+                const field_name = @as([*:0]const u8, @ptrCast(field.name.ptr));
                 getset_defs[getset_idx] = .{
                     .name = field_name,
                     .get = &FieldWrapper.getter,
@@ -122,26 +129,58 @@ pub fn PyClass(comptime T: type) type {
             }
             getset_defs[getset_idx] = .{ .name = null, .get = null, .set = null, .doc = null, .closure = null };
 
-            var slots = [_]zm.PyType_Slot{
-                .{ .slot = zm.Py_tp_dealloc, .pfunc = @as(?*anyopaque, @ptrCast(&DeallocWrapper.dealloc)) },
-                .{ .slot = zm.Py_tp_new, .pfunc = @as(?*anyopaque, @ptrCast(&NewWrapper.new)) },
-                .{ .slot = zm.Py_tp_getset, .pfunc = @as(?*anyopaque, @ptrCast(&getset_defs)) },
-                .{ .slot = 0, .pfunc = null },
-            };
+            if (has_methods) {
+                const methods = config.methods;
+                const method_count = methods.len + 1;
+                const method_defs = std.heap.c_allocator.alloc(zm.PyMethodDef, method_count) catch {
+                    zm.PyErr_SetString(zm.PyExc_MemoryError(), "out of memory");
+                    return null;
+                };
+                for (methods, 0..) |m, i| {
+                    method_defs[i] = m;
+                }
+                method_defs[method_count - 1] = .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null };
 
-            var spec = zm.PyType_Spec{
-                .name = type_name,
-                .basicsize = @as(c_int, @intCast(Cell.allocSize())),
-                .itemsize = 0,
-                .flags = zm.Py_TPFLAGS_DEFAULT | zm.Py_TPFLAGS_HEAPTYPE,
-                .slots = &slots,
-            };
+                var slots = [_]zm.PyType_Slot{
+                    .{ .slot = zm.Py_tp_dealloc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DeallocWrapper.dealloc))) },
+                    .{ .slot = zm.Py_tp_new, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NewWrapper.new))) },
+                    .{ .slot = zm.Py_tp_getset, .pfunc = @as(?*anyopaque, @ptrCast(&getset_defs)) },
+                    .{ .slot = zm.Py_tp_methods, .pfunc = @as(?*anyopaque, @ptrCast(method_defs.ptr)) },
+                    .{ .slot = 0, .pfunc = null },
+                };
 
-            return zm.PyType_FromSpec(&spec);
+                var spec = zm.PyType_Spec{
+                    .name = type_name,
+                    .basicsize = @as(c_int, @intCast(Cell.allocSize())),
+                    .itemsize = 0,
+                    .flags = zm.Py_TPFLAGS_DEFAULT | zm.Py_TPFLAGS_HEAPTYPE,
+                    .slots = &slots,
+                };
+
+                return zm.PyType_FromSpec(&spec);
+            } else {
+                var slots = [_]zm.PyType_Slot{
+                    .{ .slot = zm.Py_tp_dealloc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DeallocWrapper.dealloc))) },
+                    .{ .slot = zm.Py_tp_new, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NewWrapper.new))) },
+                    .{ .slot = zm.Py_tp_getset, .pfunc = @as(?*anyopaque, @ptrCast(&getset_defs)) },
+                    .{ .slot = 0, .pfunc = null },
+                };
+
+                var spec = zm.PyType_Spec{
+                    .name = type_name,
+                    .basicsize = @as(c_int, @intCast(Cell.allocSize())),
+                    .itemsize = 0,
+                    .flags = zm.Py_TPFLAGS_DEFAULT | zm.Py_TPFLAGS_HEAPTYPE,
+                    .slots = &slots,
+                };
+
+                return zm.PyType_FromSpec(&spec);
+            }
         }
     };
 
     return struct {
+        pub const pycell = Cell;
         pub fn py_type_obj() ?*zm.PyObject {
             return TypeBuilder.getTypeObject();
         }

@@ -19,6 +19,7 @@ pub const pyFn = funcwrap.pyFn;
 pub const pyFnNamed = funcwrap.pyFnNamed;
 pub const wrap = funcwrap.wrap;
 pub const wrapNamed = funcwrap.wrapNamed;
+pub const wrapMethod = pyclass.wrapMethod;
 
 pub const PyString = types.PyString;
 pub const PyInt = types.PyInt;
@@ -27,6 +28,7 @@ pub const PyBool = types.PyBool;
 pub const PyList = types.PyList;
 pub const PyDict = types.PyDict;
 pub const PyTuple = types.PyTuple;
+pub const PyBytes = types.PyBytes;
 
 pub const GILGuard = gil.GILGuard;
 pub const PyObjectRef = refcount.PyObjectRef;

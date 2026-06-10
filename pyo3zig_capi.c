@@ -28,3 +28,4 @@ PyObject* pyo3zig_PyList_Type(void) { return (PyObject*)&PyList_Type; }
 PyObject* pyo3zig_PyDict_Type(void) { return (PyObject*)&PyDict_Type; }
 PyObject* pyo3zig_PyTuple_Type(void) { return (PyObject*)&PyTuple_Type; }
 PyObject* pyo3zig_PyType_Type(void) { return (PyObject*)&PyType_Type; }
+PyObject* pyo3zig_PyBytes_Type(void) { return (PyObject*)&PyBytes_Type; }

@@ -6,6 +6,10 @@ pub const PyObject = pytypes.PyObject;
 pub const PyMethodDef = pytypes.PyMethodDef;
 pub const PyModuleDef = pytypes.PyModuleDef;
 pub const PyModuleDef_HEAD_INIT = pytypes.PyModuleDef_HEAD_INIT;
+pub const PyObjectHeader = pytypes.PyObjectHeader;
+pub const PyGetSetDef = pytypes.PyGetSetDef;
+pub const PyType_Slot = pytypes.PyType_Slot;
+pub const PyType_Spec = pytypes.PyType_Spec;
 pub const METH_NOARGS = pytypes.METH_NOARGS;
 pub const METH_VARARGS = pytypes.METH_VARARGS;
 pub const METH_KEYWORDS = pytypes.METH_KEYWORDS;
@@ -30,11 +34,17 @@ pub const PyUnicode_FromStringAndSize = pycall.PyUnicode_FromStringAndSize;
 pub const PyUnicode_AsUTF8 = pycall.PyUnicode_AsUTF8;
 pub const PyUnicode_Check = pycall.PyUnicode_Check;
 
+pub const PyBytes_FromStringAndSize = pycall.PyBytes_FromStringAndSize;
+pub const PyBytes_AsStringAndSize = pycall.PyBytes_AsStringAndSize;
+pub const PyBytes_Size = pycall.PyBytes_Size;
+pub const PyBytes_Check = pycall.PyBytes_Check;
+
 pub const PyLong_FromLong = pycall.PyLong_FromLong;
 pub const PyLong_FromLongLong = pycall.PyLong_FromLongLong;
 pub const PyLong_FromUnsignedLongLong = pycall.PyLong_FromUnsignedLongLong;
 pub const PyLong_AsLong = pycall.PyLong_AsLong;
 pub const PyLong_AsLongLong = pycall.PyLong_AsLongLong;
+pub const PyLong_AsUnsignedLongLong = pycall.PyLong_AsUnsignedLongLong;
 pub const PyLong_Check = pycall.PyLong_Check;
 
 pub const PyFloat_FromDouble = pycall.PyFloat_FromDouble;
@@ -97,6 +107,18 @@ pub const PyExc_ZeroDivisionError = pycall.PyExc_ZeroDivisionError;
 pub const Py_None = pycall.Py_None;
 pub const Py_True = pycall.Py_True;
 pub const Py_False = pycall.Py_False;
+
+pub const PyMem_RawMalloc = pycall.PyMem_RawMalloc;
+pub const PyMem_RawFree = pycall.PyMem_RawFree;
+
+pub const PyType_FromSpec = pycall.PyType_FromSpec;
+
+pub const Py_tp_dealloc = pytypes.Py_tp_dealloc;
+pub const Py_tp_new = pytypes.Py_tp_new;
+pub const Py_tp_getset = pytypes.Py_tp_getset;
+pub const Py_tp_methods = pytypes.Py_tp_methods;
+pub const Py_TPFLAGS_DEFAULT = pytypes.Py_TPFLAGS_DEFAULT;
+pub const Py_TPFLAGS_HEAPTYPE = pytypes.Py_TPFLAGS_HEAPTYPE;
 
 pub fn method(
     comptime name: [:0]const u8,

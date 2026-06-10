@@ -17,19 +17,43 @@ pub extern fn PyModule_AddFunctions(?*PyObject, ?[*]pytypes.PyMethodDef) callcon
 pub extern fn PyModuleDef_Init(?*PyModuleDef) callconv(.c) ?*PyObject;
 
 // Reference counting
-pub extern fn Py_INCREF(?*PyObject) callconv(.c) void;
-pub extern fn Py_DECREF(?*PyObject) callconv(.c) void;
-pub extern fn Py_XINCREF(?*PyObject) callconv(.c) void;
-pub extern fn Py_XDECREF(?*PyObject) callconv(.c) void;
-pub extern fn Py_NewRef(?*PyObject) callconv(.c) ?*PyObject;
-pub extern fn Py_XNewRef(?*PyObject) callconv(.c) ?*PyObject;
 pub extern fn Py_IncRef(?*PyObject) callconv(.c) void;
 pub extern fn Py_DecRef(?*PyObject) callconv(.c) void;
+
+// Python C-API macros implemented as Zig functions (no actual extern symbols)
+pub fn Py_INCREF(op: ?*PyObject) callconv(.c) void {
+    Py_IncRef(op);
+}
+pub fn Py_DECREF(op: ?*PyObject) callconv(.c) void {
+    Py_DecRef(op);
+}
+pub fn Py_XINCREF(op: ?*PyObject) callconv(.c) void {
+    if (op != null) Py_IncRef(op);
+}
+pub fn Py_XDECREF(op: ?*PyObject) callconv(.c) void {
+    if (op != null) Py_DecRef(op);
+}
+pub fn Py_NewRef(op: ?*PyObject) callconv(.c) ?*PyObject {
+    Py_IncRef(op);
+    return op;
+}
+pub fn Py_XNewRef(op: ?*PyObject) callconv(.c) ?*PyObject {
+    if (op != null) return Py_NewRef(op);
+    return null;
+}
 
 // String functions
 pub extern fn PyUnicode_FromString([*:0]const u8) callconv(.c) ?*PyObject;
 pub extern fn PyUnicode_FromStringAndSize([*]const u8, isize) callconv(.c) ?*PyObject;
 pub extern fn PyUnicode_AsUTF8(?*PyObject) callconv(.c) ?[*:0]const u8;
+pub extern fn PyUnicode_DecodeUTF8([*]const u8, isize, ?[*:0]const u8) callconv(.c) ?*PyObject;
+
+// Bytes functions
+pub extern fn PyBytes_FromString([*:0]const u8) callconv(.c) ?*PyObject;
+pub extern fn PyBytes_FromStringAndSize([*]const u8, isize) callconv(.c) ?*PyObject;
+pub extern fn PyBytes_AsString(?*PyObject) callconv(.c) [*]u8;
+pub extern fn PyBytes_Size(?*PyObject) callconv(.c) isize;
+pub extern fn PyBytes_AsStringAndSize(?*PyObject, *[*]u8, *isize) callconv(.c) c_int;
 
 // Integer functions
 pub extern fn PyLong_FromLong(c_long) callconv(.c) ?*PyObject;
@@ -154,6 +178,11 @@ pub fn PyTuple_Check(op: ?*PyObject) callconv(.c) c_int {
 }
 pub fn PyType_Check(op: ?*PyObject) callconv(.c) c_int {
     return PyObject_IsInstance(op, PyType_Type());
+}
+pub extern fn pyo3zig_PyBytes_Type() callconv(.c) ?*PyObject;
+pub fn PyBytes_Type() callconv(.c) ?*PyObject { return pyo3zig_PyBytes_Type(); }
+pub fn PyBytes_Check(op: ?*PyObject) callconv(.c) c_int {
+    return PyObject_IsInstance(op, PyBytes_Type());
 }
 
 // Exception types (via C wrappers for correct pointer resolution)

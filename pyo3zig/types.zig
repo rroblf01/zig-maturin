@@ -22,6 +22,7 @@ pub fn typeOf(obj: ?*zm.PyObject) PyObjectType {
     if (zm.PyLong_Check(obj) != 0) return .int;
     if (zm.PyFloat_Check(obj) != 0) return .float;
     if (zm.PyUnicode_Check(obj) != 0) return .str;
+    if (zm.PyBytes_Check(obj) != 0) return .bytes;
     if (zm.PyList_Check(obj) != 0) return .list;
     if (zm.PyDict_Check(obj) != 0) return .dict;
     if (zm.PyTuple_Check(obj) != 0) return .tuple;
@@ -48,6 +49,36 @@ pub const PyString = struct {
     }
 
     pub fn deinit(self: *PyString) void {
+        self.inner.deinit();
+    }
+};
+
+pub const PyBytes = struct {
+    inner: refcount.PyObjectRef,
+
+    pub fn init(s: []const u8) !PyBytes {
+        const ptr = zm.PyBytes_FromStringAndSize(s.ptr, @as(isize, @intCast(s.len)));
+        if (ptr == null) return error.PythonError;
+        return .{ .inner = refcount.PyObjectRef.ref(ptr) };
+    }
+
+    pub fn asSlice(self: *const PyBytes) ![]const u8 {
+        var buf: [*]u8 = undefined;
+        var buf_size: isize = undefined;
+        const result = zm.PyBytes_AsStringAndSize(self.inner.borrowShared(), &buf, &buf_size);
+        if (result != 0) return error.PythonValueError;
+        return buf[0..@as(usize, @intCast(buf_size))];
+    }
+
+    pub fn size(self: *const PyBytes) isize {
+        return zm.PyBytes_Size(self.inner.borrowShared());
+    }
+
+    pub fn borrow(self: *const PyBytes) ?*zm.PyObject {
+        return self.inner.borrowShared();
+    }
+
+    pub fn deinit(self: *PyBytes) void {
         self.inner.deinit();
     }
 };
