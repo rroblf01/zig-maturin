@@ -9,8 +9,10 @@ from zig_maturin.config import find_project_root, read_config
 
 def test_find_project_root():
     original = Path.cwd()
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
+    # Restore cwd *before* the TemporaryDirectory is cleaned up: on Windows a
+    # directory that is the current working dir cannot be removed (WinError 32).
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
             root = Path(tmp) / "myproject"
             root.mkdir()
             (root / "pyproject.toml").write_text("[project]\nname = \"test\"\n")
@@ -20,14 +22,14 @@ def test_find_project_root():
             os.chdir(str(sub))
             result = find_project_root()
             assert result == root.resolve()
-    finally:
-        os.chdir(str(original))
+        finally:
+            os.chdir(str(original))
 
 
 def test_read_config_defaults():
     original = Path.cwd()
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
             (Path(tmp) / "pyproject.toml").write_text("""\
 [project]
 name = "mymod"
@@ -45,5 +47,5 @@ zig-source = "src/main.zig"
             assert config.version == "0.2.0"
             assert config.description == "Test module"
             assert config.zig_source == "src/main.zig"
-    finally:
-        os.chdir(str(original))
+        finally:
+            os.chdir(str(original))

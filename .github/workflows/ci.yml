@@ -38,7 +38,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # x86_64 + ARM64 for Linux; macOS is Apple Silicon only (GitHub has no
+        # current free Intel runner). Windows excluded: the test step needs sh/cp.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -76,7 +78,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # x86_64 + ARM64 on Linux and Windows; macOS is Apple Silicon only
+        # (GitHub has no current free Intel macOS runner).
+        os:
+          - ubuntu-latest        # Linux x86_64
+          - ubuntu-24.04-arm     # Linux ARM64
+          - macos-latest         # macOS ARM64 (Apple Silicon)
+          - windows-latest       # Windows x86_64
+          - windows-11-arm       # Windows ARM64
         python-version: ["3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
@@ -95,7 +104,7 @@ jobs:
         run: pip install --find-links dist --no-index pyo3zig_demo
       - name: Smoke test imported extension
         run: python ci/smoke.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
           path: dist/*.whl
