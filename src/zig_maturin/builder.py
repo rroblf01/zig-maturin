@@ -38,7 +38,9 @@ def get_host_target() -> str:
     elif os_name == "macos":
         return f"{arch}-macos"
     elif os_name == "windows":
-        return f"{arch}-windows"
+        # Use the GNU (mingw) ABI bundled with Zig; the default Windows ABI can
+        # be MSVC, which needs an MSVC toolchain that isn't present.
+        return f"{arch}-windows-gnu"
     return f"{arch}-{os_name}"
 
 
@@ -93,6 +95,13 @@ def python_build_options(config: ZigMaturinConfig, target: str) -> list[str]:
             lib = f"python{sys.version_info.major}{sys.version_info.minor}"
         if libdir:
             opts.append(f"-Dpython-libdir={libdir}")
+            if lib:
+                lib_file = Path(libdir) / f"{lib}.lib"
+                if not lib_file.exists():
+                    print(
+                        f"Warning: expected import library not found: {lib_file}. "
+                        "Linking will fail; check the target Python ships its .lib."
+                    )
         if lib:
             opts.append(f"-Dpython-lib={lib}")
         elif not config.python_lib:
@@ -143,6 +152,7 @@ def build_project(
             f"-Doptimize={optimize}",
             *python_build_options(config, target),
         ]
+        print(f"  $ {' '.join(cmd)}")
 
         result = subprocess.run(
             cmd,
@@ -152,10 +162,9 @@ def build_project(
         )
 
         if result.returncode != 0:
-            print(f"Build failed for target {target}:")
-            print(result.stderr)
-            if result.stdout:
-                print(result.stdout)
+            print(f"Build failed for target {target} (exit {result.returncode}):")
+            print(f"--- zig stdout ---\n{result.stdout or '(empty)'}")
+            print(f"--- zig stderr ---\n{result.stderr or '(empty)'}")
             raise SystemExit(1)
 
         print(result.stdout)
