@@ -875,6 +875,9 @@ const STUB = pz.moduleStub(.{
     .{ .name = "make_dt", .func = make_dt, .args = &.{ "year", "month", "day" } },
     .{ .name = "dt_year", .func = dt_year, .args = &.{"dt"} },
     .{ .name = "next_day", .func = next_day, .args = &.{"dt"} },
+    .{ .name = "cmul", .func = cmul, .args = &.{ "a", "b" } },
+    .{ .name = "check_positive", .func = check_positive, .args = &.{"n"} },
+    .{ .name = "sum_all", .func = sum_all, .raw = true },
 });
 
 // Class stubs so type checkers see the classes too.
@@ -894,6 +897,9 @@ const CLASS_STUBS =
         .methods = .{
             .{ .name = "dot", .func = vec2_dot, .args = &.{ "other_x", "other_y" } },
         },
+        .properties = .{
+            .{ .name = "length_sq", .get = vec2_length_sq },
+        },
     }) ++
     pz.classStub(.{
         .name = "Range",
@@ -901,8 +907,11 @@ const CLASS_STUBS =
         .init = &.{ "start", "stop" },
     });
 
+// Custom exception type, reflected in the stub as a subclass.
+const EXC_STUBS = pz.exceptionStub("DemoError", "ValueError");
+
 fn __pyi__() []const u8 {
-    return STUB ++ "\n" ++ CLASS_STUBS;
+    return STUB ++ "\n" ++ CLASS_STUBS ++ EXC_STUBS;
 }
 
 fn sub_triple(x: i64) i64 {

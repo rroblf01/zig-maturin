@@ -20,6 +20,8 @@ pub const funcStub = stubgen.funcStub;
 pub const moduleStub = stubgen.moduleStub;
 pub const methodStub = stubgen.methodStub;
 pub const classStub = stubgen.classStub;
+pub const rawFuncStub = stubgen.rawFuncStub;
+pub const exceptionStub = stubgen.exceptionStub;
 
 pub const pyModule = module.pyModule;
 pub const exportModule = module.exportModule;

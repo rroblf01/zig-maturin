@@ -399,6 +399,11 @@ check(
 check("stub has class Range", "class Range:" in _stub)
 check("stub has dunder __eq__", "def __eq__(self, other:" in _stub, _stub)
 check("stub has dunder __len__", "def __len__(self) -> int" in _stub, _stub)
+# 1.0 features reflected in the stub.
+check("stub maps complex", "def cmul(a: complex, b: complex) -> complex" in _stub, _stub)
+check("stub varargs", "def sum_all(*args: object, **kwargs: object) -> int" in _stub, _stub)
+check("stub property", "@property\n    def length_sq(self) -> int" in _stub, _stub)
+check("stub custom exception", "class DemoError(ValueError): ..." in _stub, _stub)
 
 # test_module
 check("has hello", hasattr(m, "hello"))

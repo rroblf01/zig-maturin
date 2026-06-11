@@ -243,6 +243,51 @@ jobs:
           pip install --find-links dist --no-index pyo3zig_demo
           python ci/smoke.py
 
+  # End-to-end exercise of the 1.0 packaging features that unit tests only cover
+  # in part: mixed Python/Zig layout, PEP 660 editable installs, and the
+  # generate-ci workflow generator.
+  packaging-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Install zig-maturin
+        run: pip install . pyyaml
+
+      - name: generate-ci produces valid YAML
+        run: |
+          zig-maturin generate-ci --print > wheels.yml
+          python -c "import yaml; d=yaml.safe_load(open('wheels.yml')); assert set(d['jobs'])=={'wheels','sdist','publish'}, d['jobs']"
+
+      - name: Mixed Python/Zig layout (package + nested extension)
+        run: |
+          # Turning src/<module>/ into a package switches the build to mixed
+          # layout: the extension nests inside it and the .py files ride along.
+          mkdir -p src/pyo3zig_demo
+          printf 'from .pyo3zig_demo import *\nfrom .companion import tag\n' > src/pyo3zig_demo/__init__.py
+          printf 'def tag():\n    return "companion-ok"\n' > src/pyo3zig_demo/companion.py
+          zig-maturin build --out dist_mixed
+          python -c "import zipfile,glob; n=zipfile.ZipFile(glob.glob('dist_mixed/*.whl')[0]).namelist(); assert 'pyo3zig_demo/pyo3zig_demo.so' in n and 'pyo3zig_demo/companion.py' in n, n"
+          pip install --find-links dist_mixed --no-index --force-reinstall pyo3zig_demo
+          python -c "import pyo3zig_demo as m; assert m.hello().startswith('Hello'); assert m.tag()=='companion-ok'; assert m.mathx.triple(2)==6"
+
+      - name: Editable install (PEP 660 build_editable)
+        run: |
+          python - <<'PY'
+          import os, sys, glob, subprocess, tempfile
+          from zig_maturin import buildapi
+          d = tempfile.mkdtemp()
+          name = buildapi.build_editable(d)
+          subprocess.check_call([sys.executable, "-m", "pip", "install",
+                                 "--force-reinstall", os.path.join(d, name)])
+          PY
+          python -c "import pyo3zig_demo as m; print('editable import ok:', m.hello())"
+
   # Windows/ARM64 wheel, cross-compiled from a Linux x86_64 runner: zig.exe
   # segfaults when run natively on a Windows/ARM host, and an x86_64 host
   # cannot run the resulting ARM64 .pyd, so this is build-only (no import).
