@@ -186,12 +186,16 @@ def build_project(
     if not targets:
         targets = [get_host_target()]
 
-    # A free-threaded (no-GIL, PEP 703) interpreter has its own ABI: the wheel
-    # tag carries a `t` suffix (e.g. cp313t) and is not interchangeable with the
-    # GIL build's. Detected from the interpreter doing the build.
+    # A free-threaded (no-GIL, PEP 703) interpreter has its own ABI. Only the
+    # *ABI* tag carries the `t` suffix (e.g. cp313t); the interpreter tag stays
+    # cp313. The full wheel tag is therefore `cp313-cp313t-...` — pip on a
+    # free-threaded build looks for exactly that, and `cp313t-cp313t-...` would
+    # match no compatible tag. Detected from the interpreter doing the build.
     free_threaded = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
     ft = "t" if free_threaded else ""
-    python_version = f"cp{sys.version_info.major}{sys.version_info.minor}{ft}"
+    cp = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    python_interp_tag = cp           # cp313        (interpreter tag, no `t`)
+    python_abi_tag = f"{cp}{ft}"     # cp313 / cp313t (ABI tag)
     wheels: list[Path] = []
 
     # abi3: one stable-ABI wheel tagged at the configured minimum version.
@@ -268,8 +272,8 @@ def build_project(
             python_tag = abi3_python_tag
             abi_tag = "abi3"
         else:
-            python_tag = python_version
-            abi_tag = python_version
+            python_tag = python_interp_tag
+            abi_tag = python_abi_tag
 
         # Native builds: embed the comptime-generated type stub. Cross builds
         # can't import the artifact, so this returns None and is skipped.
