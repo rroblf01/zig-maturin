@@ -11,6 +11,29 @@ from .config import ZigMaturinConfig, find_project_root
 from .wheel import build_wheel, generate_metadata
 
 
+def zig_command() -> list[str]:
+    """The command that runs the Zig compiler.
+
+    Prefers a `zig` already on PATH (fastest, what developers usually have).
+    Falls back to the `ziglang` PyPI package (`python -m ziglang`), which ships
+    a pinned Zig binary — so a `pip install` with `ziglang` as a build dep works
+    with no system toolchain. Raises if neither is available.
+    """
+    import shutil
+
+    if shutil.which("zig"):
+        return ["zig"]
+    try:
+        import ziglang  # noqa: F401
+
+        return [sys.executable, "-m", "ziglang"]
+    except ImportError:
+        raise SystemExit(
+            "zig-maturin: no Zig toolchain found. Install Zig and put it on "
+            "PATH, or `pip install ziglang`."
+        )
+
+
 def get_host_target() -> str:
     machine = platform.machine().lower()
     system = platform.system().lower()
@@ -163,7 +186,12 @@ def build_project(
     if not targets:
         targets = [get_host_target()]
 
-    python_version = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    # A free-threaded (no-GIL, PEP 703) interpreter has its own ABI: the wheel
+    # tag carries a `t` suffix (e.g. cp313t) and is not interchangeable with the
+    # GIL build's. Detected from the interpreter doing the build.
+    free_threaded = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
+    ft = "t" if free_threaded else ""
+    python_version = f"cp{sys.version_info.major}{sys.version_info.minor}{ft}"
     wheels: list[Path] = []
 
     # abi3: one stable-ABI wheel tagged at the configured minimum version.
@@ -180,7 +208,7 @@ def build_project(
 
         print(f"Building for target: {target}")
         cmd = [
-            "zig",
+            *zig_command(),
             "build",
             f"-Dtarget={target}",
             f"-Doptimize={optimize}",

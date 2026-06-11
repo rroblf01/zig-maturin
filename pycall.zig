@@ -84,6 +84,9 @@ pub extern fn pyo3zig_make_ready_awaitable(?*PyObject) callconv(.c) ?*PyObject;
 pub extern fn pyo3zig_make_stop_async_awaitable() callconv(.c) ?*PyObject;
 // Await-iterator of an arbitrary awaitable (for __await_delegate__ suspension).
 pub extern fn pyo3zig_get_await_iter(?*PyObject) callconv(.c) ?*PyObject;
+// Declare a single-phase module free-threading safe (Py_MOD_GIL_NOT_USED).
+// No-op on regular/Limited-API builds.
+pub extern fn pyo3zig_module_declare_no_gil(?*PyObject) callconv(.c) void;
 // types.GenericAlias for __class_getitem__ (MyClass[int] in type hints).
 pub extern fn pyo3zig_GenericAlias(?*PyObject, ?*PyObject) callconv(.c) ?*PyObject;
 // Managed __dict__ traverse/clear (for GC classes with arbitrary attributes).
@@ -178,6 +181,9 @@ pub extern fn PyLong_FromString([*:0]const u8, ?*?[*:0]u8, c_int) callconv(.c) ?
 pub extern fn PyBuffer_FillInfo(?*anyopaque, ?*PyObject, ?*anyopaque, isize, c_int, c_int) callconv(.c) c_int;
 
 pub extern fn PyImport_ImportModule([*:0]const u8) callconv(.c) ?*PyObject;
+// Borrowed reference to the interpreter's sys.modules dict (for submodule
+// registration under a dotted "parent.child" name).
+pub extern fn PyImport_GetModuleDict() callconv(.c) ?*PyObject;
 
 // Object utilities
 pub extern fn PyObject_GetAttrString(?*PyObject, [*:0]const u8) callconv(.c) ?*PyObject;
@@ -202,6 +208,12 @@ pub extern fn PyList_Size(?*PyObject) callconv(.c) isize;
 pub extern fn PyList_GetItem(?*PyObject, isize) callconv(.c) ?*PyObject;
 pub extern fn PyList_SetItem(?*PyObject, isize, ?*PyObject) callconv(.c) c_int;
 pub extern fn PyList_Append(?*PyObject, ?*PyObject) callconv(.c) c_int;
+
+// Complex numbers (map to/from Zig std.math.Complex(f64) / Complex(f32)).
+pub extern fn PyComplex_FromDoubles(f64, f64) callconv(.c) ?*PyObject;
+pub extern fn PyComplex_RealAsDouble(?*PyObject) callconv(.c) f64;
+pub extern fn PyComplex_ImagAsDouble(?*PyObject) callconv(.c) f64;
+pub extern fn pyo3zig_PyComplex_Check(?*PyObject) callconv(.c) c_int;
 
 // Dict functions
 pub extern fn PyDict_New() callconv(.c) ?*PyObject;

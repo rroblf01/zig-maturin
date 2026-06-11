@@ -12,9 +12,15 @@ pub const ConversionError = error{
     NotImplemented,
 };
 
+/// True for Zig's std.math.Complex(f64)/Complex(f32), which map to Python complex.
+fn isComplex(comptime T: type) bool {
+    return T == std.math.Complex(f64) or T == std.math.Complex(f32);
+}
+
 /// Python type-hint spelling for a Zig type, used in error messages.
 fn expectedName(comptime T: type) []const u8 {
     if (T == ?*zm.PyObject or T == *zm.PyObject) return "object";
+    if (comptime isComplex(T)) return "complex";
     return switch (@typeInfo(T)) {
         .int => "int",
         .float => "float",
@@ -89,6 +95,9 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
         return value;
     }
     if (T == datetime.DateTime) return datetime.toPy(value);
+    if (comptime isComplex(T)) {
+        return zm.PyComplex_FromDoubles(@floatCast(value.re), @floatCast(value.im));
+    }
     switch (@typeInfo(T)) {
         .int => {
             const info = @typeInfo(T).int;
@@ -232,6 +241,23 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
     if (obj == null) return error.PythonValueError;
 
     if (T == datetime.DateTime) return datetime.fromPy(obj) orelse error.PythonTypeError;
+
+    if (comptime isComplex(T)) {
+        // Accepts complex, or any int/float (imag part 0), matching Python's
+        // own complex() coercion. PyComplex_RealAsDouble sets an error on a
+        // non-number and returns -1.0.
+        const re = zm.PyComplex_RealAsDouble(obj);
+        if (re == -1.0 and zm.PyErr_Occurred() != null) {
+            zm.PyErr_Clear();
+            raiseTypeError(T, obj);
+            return error.PythonTypeError;
+        }
+        const Elem = @TypeOf(@as(T, undefined).re);
+        return T{
+            .re = @as(Elem, @floatCast(re)),
+            .im = @as(Elem, @floatCast(zm.PyComplex_ImagAsDouble(obj))),
+        };
+    }
 
     switch (@typeInfo(T)) {
         .int => |info| {

@@ -15,16 +15,21 @@ pub const DateTime = struct {
     microsecond: u32 = 0,
 };
 
-// Cached `datetime.datetime` class (a permanent reference; the GIL serializes
-// the lazy initialization).
+// Cached `datetime.datetime` class (a permanent reference). Published with an
+// atomic compare-exchange so the lazy init is correct on a free-threaded
+// (no-GIL) interpreter too, where the GIL no longer serializes first calls. If
+// two threads race, the loser drops its extra reference and uses the winner's.
 var dt_class: ?*zm.PyObject = null;
 
 fn datetimeClass() ?*zm.PyObject {
-    if (dt_class) |c| return c;
+    if (@atomicLoad(?*zm.PyObject, &dt_class, .acquire)) |c| return c;
     const mod = zm.PyImport_ImportModule("datetime") orelse return null;
     defer zm.Py_XDECREF(mod);
     const cls = zm.PyObject_GetAttrString(mod, "datetime") orelse return null;
-    dt_class = cls; // keep the reference for the process lifetime
+    if (@cmpxchgStrong(?*zm.PyObject, &dt_class, null, cls, .acq_rel, .acquire)) |won| {
+        zm.Py_XDECREF(cls); // lost the race; use the reference already stored
+        return won;
+    }
     return cls;
 }
 

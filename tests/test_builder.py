@@ -1,6 +1,52 @@
 from __future__ import annotations
 
-from zig_maturin.builder import get_host_target, target_to_platform_tag
+import shutil
+
+import pytest
+
+from zig_maturin.builder import get_host_target, target_to_platform_tag, zig_command
+
+
+def test_zig_command_prefers_path_zig(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/zig")
+    assert zig_command() == ["zig"]
+
+
+def test_zig_command_falls_back_to_ziglang(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    pytest.importorskip("ziglang")
+    assert zig_command() == [sys.executable, "-m", "ziglang"]
+
+
+def test_zig_command_errors_without_toolchain(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setitem(__import__("sys").modules, "ziglang", None)
+    # With ziglang import forced to fail, expect a clear SystemExit.
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name == "ziglang":
+            raise ImportError("no ziglang")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(SystemExit):
+        zig_command()
+
+
+def test_build_requires_ziglang_when_no_system_zig(monkeypatch):
+    from zig_maturin import buildapi
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    reqs = buildapi.get_requires_for_build_wheel()
+    assert any("ziglang" in r for r in reqs)
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/zig")
+    assert buildapi.get_requires_for_build_wheel() == []
 
 
 def test_get_host_target():

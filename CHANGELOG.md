@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-06-11
+
+First stable release. The public Zig API (`pyo3zig`, imported as `pz`) and the
+`zig_maturin` build tooling are now covered by semantic versioning: breaking
+changes to either wait for a 2.0.
+
+### Added
+- **Free-threading (no-GIL, PEP 703) support**: extensions declare themselves
+  `Py_MOD_GIL_NOT_USED`, so on a free-threaded interpreter (`python3.13t` /
+  `python3.14t`) they run without forcing the GIL back on process-wide. The
+  shim already uses out-of-line refcounting and per-thread state; the remaining
+  process-lifetime caches (the datetime class, the await-iterator type) are now
+  published with an atomic compare-exchange / `PyMutex` so first-use is race-free
+  without the GIL. Building on a free-threaded interpreter tags the wheel
+  `cp3Xt`. (No-op on regular and Limited-API builds.)
+- **Toolchain-free `pip install`**: when no `zig` is on PATH, the PEP 517 backend
+  pulls in the `ziglang` wheel (a pinned Zig binary) automatically and builds via
+  `python -m ziglang`, so `pip install .` works with no system toolchain.
+  Developers who already have Zig pay nothing. A `zig-maturin build` from the CLI
+  uses the same fallback.
+- **Nested submodules**: `.submodules = .{ pz.pyModule("sub", .{...}), ... }` in a
+  module config creates child modules, sets them as attributes of the parent, and
+  registers them in `sys.modules` under the dotted `parent.child` name (with a
+  fully-qualified `__name__`), so both `parent.sub` and `import parent.sub` work.
+- **`complex` conversion**: Zig's `std.math.Complex(f64)` / `Complex(f32)` map
+  to/from Python `complex` as arguments and return values (an `int`/`float`
+  argument coerces, matching Python's own `complex()`).
+- **`zig-maturin build --abi3 <X.Y>`** CLI flag: build a stable-ABI wheel without
+  editing `pyproject.toml`.
+
+### Not yet
+- **`set` / `frozenset` and `dict`↔`HashMap` typed conversion**: Python sets and
+  dicts already cross the boundary as a raw `*pz.PyObject` (full manual control);
+  a typed mapping awaits dedicated wrapper types like the existing `PyList` /
+  `PyDict` and is deferred to keep the comptime converter unambiguous.
+
 ## [0.3.0] - 2026-06-10
 
 ### Added

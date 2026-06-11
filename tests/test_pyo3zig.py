@@ -306,9 +306,19 @@ except RuntimeError:
 check("Boomable(5).v", m.Boomable(5).v == 5)
 
 # test_module_constants
-check("VERSION constant", m.VERSION == "0.3.0")
+check("VERSION constant", m.VERSION == "1.0.0")
 check("MAX_ITEMS constant", m.MAX_ITEMS == 100)
 check("PI constant", abs(m.PI - 3.14159) < 1e-9)
+
+# test_submodule (nested module: attribute access + dotted import + sys.modules)
+check("submodule attribute", hasattr(m, "mathx"))
+check("submodule function", m.mathx.triple(4) == 12)
+check("submodule constant", abs(m.mathx.E - 2.71828) < 1e-9)
+check("submodule __name__ is dotted", m.mathx.__name__ == "pyo3zig_demo.mathx")
+import importlib  # noqa: E402
+
+check("submodule importable via dotted name", importlib.import_module("pyo3zig_demo.mathx").triple(3) == 9)
+check("submodule registered in sys.modules", "pyo3zig_demo.mathx" in sys.modules)
 
 # test_no_leaks (refcounts must stay stable across many calls)
 _obj = object()
@@ -610,6 +620,16 @@ try:
     check("datetime type error", False, "no exception")
 except TypeError as e:
     check("datetime type error", "datetime" in str(e), str(e))
+
+# test_complex (std.math.Complex <-> Python complex)
+check("complex multiply", m.cmul(complex(1, 2), complex(3, 4)) == complex(-5, 10))
+check("complex from int (imag 0)", m.cmul(2, complex(1, 1)) == complex(2, 2))
+check("complex from float", m.cmul(2.5, complex(2, 0)) == complex(5, 0))
+try:
+    m.cmul("x", complex(1, 1))
+    check("complex type error", False, "no exception")
+except TypeError as e:
+    check("complex type error", "complex" in str(e), str(e))
 
 # test_call_kwargs
 adder = m.Adder(10)

@@ -46,9 +46,22 @@ static PyType_Spec pzra_spec = {
 };
 static PyObject* pzra_type = NULL; /* created once, kept for the process */
 
+#ifdef Py_GIL_DISABLED
+/* On a free-threaded build there is no GIL serializing the lazy init below, so
+ * two threads could race to build pzra_type and leak one. PyMutex is part of
+ * the stable ABI from 3.13 (the floor for free-threaded builds). */
+static PyMutex pzra_lock = {0};
+#endif
+
 static PyObject* pzra_new(PyObject* value, int is_stop) {
     if (!pzra_type) {
+#ifdef Py_GIL_DISABLED
+        PyMutex_Lock(&pzra_lock);
+        if (!pzra_type) pzra_type = PyType_FromSpec(&pzra_spec);
+        PyMutex_Unlock(&pzra_lock);
+#else
         pzra_type = PyType_FromSpec(&pzra_spec);
+#endif
         if (!pzra_type) return NULL;
     }
     PzReadyAwaitable* a =
@@ -65,6 +78,20 @@ PyObject* pyo3zig_make_ready_awaitable(PyObject* value) { return pzra_new(value,
 
 /* Awaitable that raises StopAsyncIteration (ends an `async for`). */
 PyObject* pyo3zig_make_stop_async_awaitable(void) { return pzra_new(NULL, 1); }
+
+/* Declare that this single-phase module is safe to run without the GIL. On a
+ * free-threaded interpreter, modules that do not opt in force the GIL back on
+ * for the whole process; opting in keeps the no-GIL benefit. No-op on a regular
+ * build (and under the Limited API, which has no free-threaded ABI). The shim
+ * already uses out-of-line refcounting and per-thread state, and the lazy caches
+ * are mutex-guarded, so the extension is free-threading clean. */
+void pyo3zig_module_declare_no_gil(PyObject* module) {
+#if defined(Py_GIL_DISABLED) && !defined(Py_LIMITED_API)
+    PyUnstable_Module_SetGIL(module, Py_MOD_GIL_NOT_USED);
+#else
+    (void)module;
+#endif
+}
 
 /* Return the await-iterator of an arbitrary awaitable (coroutine, Future, or an
  * object with __await__). Every awaitable exposes __await__, so calling it is
@@ -227,6 +254,9 @@ PyObject* pyo3zig_PyTuple_Type(void) { return (PyObject*)&PyTuple_Type; }
 PyObject* pyo3zig_PyType_Type(void) { return (PyObject*)&PyType_Type; }
 PyObject* pyo3zig_PyBytes_Type(void) { return (PyObject*)&PyBytes_Type; }
 PyObject* pyo3zig_PyByteArray_Type(void) { return (PyObject*)&PyByteArray_Type; }
+
+/* PyComplex_Check is a macro; wrap it so Zig can call it. */
+int pyo3zig_PyComplex_Check(PyObject* o) { return PyComplex_Check(o); }
 
 /* The canonical "this type is unhashable" hash function. CPython special-cases
  * this exact pointer in tp_hash to expose __hash__ as None (the semantics of a

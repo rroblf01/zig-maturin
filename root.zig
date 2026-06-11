@@ -84,6 +84,13 @@ pub const PyList_SetItem = pycall.PyList_SetItem;
 pub const PyList_Append = pycall.PyList_Append;
 pub const PyList_Check = pycall.PyList_Check;
 
+pub const PyComplex_FromDoubles = pycall.PyComplex_FromDoubles;
+pub const PyComplex_RealAsDouble = pycall.PyComplex_RealAsDouble;
+pub const PyComplex_ImagAsDouble = pycall.PyComplex_ImagAsDouble;
+pub fn PyComplex_Check(o: ?*pytypes.PyObject) c_int {
+    return pycall.pyo3zig_PyComplex_Check(o);
+}
+
 pub const PyDict_New = pycall.PyDict_New;
 pub const PyDict_SetItemString = pycall.PyDict_SetItemString;
 pub const PyDict_GetItemString = pycall.PyDict_GetItemString;
@@ -145,6 +152,7 @@ pub const PyErr_ExceptionMatches = pycall.PyErr_ExceptionMatches;
 
 pub const PyObject_Repr = pycall.PyObject_Repr;
 pub const PyImport_ImportModule = pycall.PyImport_ImportModule;
+pub const PyImport_GetModuleDict = pycall.PyImport_GetModuleDict;
 pub const PyObject_Type = pycall.PyObject_Type;
 pub const PyObject_IsInstance = pycall.PyObject_IsInstance;
 pub const PyObject_CallFunction = pycall.PyObject_CallFunction;
@@ -168,6 +176,7 @@ pub const PyObject_ClearWeakRefs = pycall.PyObject_ClearWeakRefs;
 pub const pyo3zig_make_ready_awaitable = pycall.pyo3zig_make_ready_awaitable;
 pub const pyo3zig_make_stop_async_awaitable = pycall.pyo3zig_make_stop_async_awaitable;
 pub const pyo3zig_get_await_iter = pycall.pyo3zig_get_await_iter;
+pub const pyo3zig_module_declare_no_gil = pycall.pyo3zig_module_declare_no_gil;
 pub const pyo3zig_GenericAlias = pycall.pyo3zig_GenericAlias;
 pub const pyo3zig_VisitManagedDict = pycall.pyo3zig_VisitManagedDict;
 pub const pyo3zig_ClearManagedDict = pycall.pyo3zig_ClearManagedDict;

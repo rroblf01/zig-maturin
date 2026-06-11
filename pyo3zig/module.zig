@@ -46,6 +46,11 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
                 return null;
             }
 
+            // Opt in to free-threading: on a no-GIL interpreter a module that
+            // doesn't declare itself safe forces the GIL back on process-wide.
+            // No-op on regular/Limited-API builds.
+            zm.pyo3zig_module_declare_no_gil(m);
+
             const classes: []const type = if (@hasField(@TypeOf(config), "classes")) config.classes else &.{};
             inline for (classes) |cls| {
                 const type_obj = cls.py_type_obj();
@@ -84,10 +89,50 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
                 }
             }
 
+            // Nested submodules: .submodules = .{ pz.pyModule("sub", .{...}), ... }
+            // Each child is created, set as an attribute of the parent, and
+            // registered in sys.modules under the dotted "parent.child" name so
+            // both `parent.sub` and `import parent.sub` work.
+            if (@hasField(@TypeOf(config), "submodules")) {
+                const sys_modules = zm.PyImport_GetModuleDict();
+                inline for (config.submodules) |Child| {
+                    // Comptime "parent.child" for the sys.modules key.
+                    const dotted_z: [*:0]const u8 = std.fmt.comptimePrint(
+                        "{s}.{s}",
+                        .{ name, Child.module_name },
+                    );
+
+                    const sub = Child.init() orelse {
+                        zm.Py_XDECREF(m);
+                        return null;
+                    };
+                    // Give the submodule its fully-qualified __name__ so repr,
+                    // pickling and tracebacks read "parent.child", not "child".
+                    if (zm.PyUnicode_FromString(dotted_z)) |qual| {
+                        _ = zm.PyObject_SetAttrString(sub, "__name__", qual);
+                        zm.Py_XDECREF(qual);
+                    }
+                    // SetAttrString / SetItemString both incref; drop our own
+                    // reference from init() after both holders are established.
+                    if (zm.PyObject_SetAttrString(m, Child.class_name_z(), sub) != 0 or
+                        (sys_modules != null and zm.PyDict_SetItemString(sys_modules, dotted_z, sub) != 0))
+                    {
+                        zm.Py_XDECREF(sub);
+                        zm.Py_XDECREF(m);
+                        return null;
+                    }
+                    zm.Py_XDECREF(sub);
+                }
+            }
+
             return m;
         }
 
         pub const module_name: [:0]const u8 = name;
+        /// Null-terminated short module name (for attribute registration).
+        pub fn class_name_z() [*:0]const u8 {
+            return @as([*:0]const u8, @ptrCast(name.ptr));
+        }
     };
 }
 

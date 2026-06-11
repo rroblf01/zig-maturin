@@ -543,6 +543,11 @@ fn next_day(dt: pz.DateTime) pz.DateTime {
     return d;
 }
 
+// Complex numbers cross the boundary as Python `complex` (std.math.Complex).
+fn cmul(a: std.math.Complex(f64), b: std.math.Complex(f64)) std.math.Complex(f64) {
+    return a.mul(b);
+}
+
 // A class holding a Python object reference -> participates in cyclic GC. The
 // framework owns the `next` reference, visits it in tp_traverse, and clears it
 // in tp_clear, so reference cycles are collectable.
@@ -869,13 +874,28 @@ fn __pyi__() []const u8 {
     return STUB ++ "\n" ++ CLASS_STUBS;
 }
 
+fn sub_triple(x: i64) i64 {
+    return x * 3;
+}
+
+// A nested submodule: importable as `pyo3zig_demo.mathx` and reachable as the
+// attribute `pyo3zig_demo.mathx`.
+const MathxMod = pz.pyModule("mathx", .{
+    .doc = "Demo submodule with extra math helpers.",
+    .constants = .{ .E = @as(f64, 2.71828) },
+    .functions = &[_]pz.PyMethodDef{
+        pz.pyFnNamed("triple", sub_triple),
+    },
+});
+
 const Mod = pz.pyModule("pyo3zig_demo", .{
     .doc = "Demo module built with pyo3zig.",
     .constants = .{
-        .VERSION = "0.3.0",
+        .VERSION = "1.0.0",
         .MAX_ITEMS = @as(i64, 100),
         .PI = @as(f64, 3.14159),
     },
+    .submodules = .{MathxMod},
     .functions = &[_]pz.PyMethodDef{
         pz.pyFnNamed("hello", hello),
         pz.pyFnNamed("add", add),
@@ -907,6 +927,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("make_dt", make_dt),
         pz.pyFnNamed("dt_year", dt_year),
         pz.pyFnNamed("next_day", next_day),
+        pz.pyFnNamed("cmul", cmul),
     },
     .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass, AwaiterClass },
 });

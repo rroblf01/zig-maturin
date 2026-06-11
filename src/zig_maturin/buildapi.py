@@ -7,8 +7,10 @@ Set in a project's pyproject.toml so `pip install .`, `pip wheel .`, and
     requires = ["zig-maturin"]
     build-backend = "zig_maturin.buildapi"
 
-`zig` must be on PATH at build time. abi3 can be requested either in
-`[tool.zig-maturin] abi3 = "3.12"` or via a config setting
+No system toolchain is required: if `zig` is not on PATH at build time, the
+`ziglang` PyPI package (a pinned Zig binary) is pulled in automatically as a
+build dependency, so `pip install .` works out of the box. abi3 can be requested
+either in `[tool.zig-maturin] abi3 = "3.12"` or via a config setting
 (`--config-setting=abi3=3.12`).
 """
 
@@ -60,13 +62,23 @@ def build_sdist(
 # --- Optional hooks -------------------------------------------------------
 
 
+def _zig_build_requires() -> list[str]:
+    """Pull in the `ziglang` wheel (a pinned Zig binary) only when there is no
+    system `zig` on PATH, so developers who already have Zig pay nothing while
+    a bare `pip install` still succeeds with no system toolchain."""
+    import shutil
+
+    if shutil.which("zig"):
+        return []
+    return ["ziglang>=0.16.0,<0.17.0"]
+
+
 def get_requires_for_build_wheel(config_settings: dict | None = None) -> list[str]:
-    # The Zig toolchain is a non-Python system dependency (must be on PATH);
-    # there are no extra Python build requirements beyond zig-maturin itself.
-    return []
+    return _zig_build_requires()
 
 
 def get_requires_for_build_sdist(config_settings: dict | None = None) -> list[str]:
+    # An sdist is a pure tarball; building it needs no compiler.
     return []
 
 
