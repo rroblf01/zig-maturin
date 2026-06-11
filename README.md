@@ -96,6 +96,7 @@ Zig error surface as a Python exception.
 | `f32`, `f64` | `float` | `float` |
 | `bool` | `bool` | `bool` |
 | `enum` | `int` (validated; bad value → `ValueError`) | `int` |
+| `pz.DateTime` | `datetime.datetime` | `datetime.datetime` |
 | `[]const u8` | `str` / `bytes` / `bytearray` (borrowed) | `str` |
 | `?T` | `T` or `None` | `T` or `None` |
 | `[]T`, `[N]T` | `list` / `tuple` | `list` |

@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **`datetime.datetime` conversion**: a `pz.DateTime` struct (year/month/day +
+  optional time fields) maps to/from Python's `datetime.datetime`. The module
+  init runs `PyDateTime_IMPORT` so the C-API capsule is ready.
 - **Zig `enum` arguments and return values**: cross the boundary as the enum's
   integer value; an out-of-range int argument raises `ValueError`.
 - **`copy.copy` / `copy.deepcopy`**: `__copy__(self)` and
@@ -81,6 +84,9 @@ All notable changes to this project are documented here. The format is based on
   orchestration beyond this release.
 - **weakref for non-GC value classes** (managed weakref needs the GC pre-header;
   a value class would need an explicit `tp_weaklistoffset` field instead).
+- **`async` / `__await__`** (and async iteration): a useful awaitable needs a
+  framework-provided one-shot awaitable-iterator type (CPython exposes no public
+  helper), which is its own piece of work.
 - **Subclassing classes that need a custom destructor** (`__deinit__` or GC
   classes): `Py_TPFLAGS_BASETYPE` is set only for value classes, where CPython's
   default dealloc safely handles a subclass's managed `__dict__` and GC.

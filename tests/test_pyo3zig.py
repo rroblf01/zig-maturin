@@ -1,6 +1,7 @@
 """Tests for the pyo3zig extension module."""
 
 import copy
+import datetime
 import gc
 import math
 import sys
@@ -584,6 +585,19 @@ check("copy.copy is a new object", cp is not v)
 dp = copy.deepcopy(v)
 check("copy.deepcopy -> instance", type(dp) is m.Vec2 and dp.x == 3 and dp.y == 4)
 check("copy.deepcopy is a new object", dp is not v)
+
+# test_datetime
+dt = m.make_dt(2026, 6, 11)
+check("make_dt -> datetime", isinstance(dt, datetime.datetime))
+check("make_dt fields", (dt.year, dt.month, dt.day) == (2026, 6, 11))
+check("dt_year reads datetime", m.dt_year(datetime.datetime(1999, 1, 2)) == 1999)
+nd = m.next_day(datetime.datetime(2026, 6, 11, 3, 4, 5))
+check("next_day round-trip", (nd.year, nd.month, nd.day) == (2026, 6, 12))
+try:
+    m.dt_year("notadate")
+    check("datetime type error", False, "no exception")
+except TypeError as e:
+    check("datetime type error", "datetime" in str(e), str(e))
 
 total = passed + failed
 print(
