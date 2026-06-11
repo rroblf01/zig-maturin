@@ -53,6 +53,49 @@ def test_build_wheel(tmp_path):
         assert "testmod-0.1.0.dist-info/RECORD" in names
 
 
+def test_build_wheel_mixed_layout(tmp_path):
+    # A `<module_name>/` package nests the extension and ships the pure-Python
+    # files alongside it.
+    pkg = tmp_path / "mymod"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("from .mymod import *\n")
+    (pkg / "helpers.py").write_text("def util():\n    return 42\n")
+    sub = pkg / "sub"
+    sub.mkdir()
+    (sub / "__init__.py").write_text("")
+
+    so_path = tmp_path / "build.so"
+    so_path.write_bytes(b"\x7fELF fake")
+
+    wheel_path = build_wheel(
+        module_name="mymod",
+        version="0.1.0",
+        description="",
+        authors=[],
+        so_path=so_path,
+        python_tag="cp314",
+        abi_tag="cp314",
+        platform_tag="manylinux_2_28_x86_64",
+        so_suffix=".so",
+        output_dir=str(tmp_path / "dist"),
+        pyi="x: int",
+        py_package=pkg,
+    )
+
+    with zipfile.ZipFile(wheel_path, "r") as zf:
+        names = zf.namelist()
+        # Extension nested inside the package; not at the archive root.
+        assert "mymod/mymod.so" in names
+        assert "mymod.so" not in names
+        assert "mymod/__init__.py" in names
+        assert "mymod/helpers.py" in names
+        assert "mymod/sub/__init__.py" in names
+        assert "mymod/mymod.pyi" in names
+        record = zf.read("mymod-0.1.0.dist-info/RECORD").decode()
+        assert "mymod/mymod.so,sha256=" in record
+        assert "mymod/helpers.py,sha256=" in record
+
+
 def test_build_wheel_for_different_platforms(tmp_path):
     so_content = b"dummy"
     so_path = tmp_path / "mod.so"

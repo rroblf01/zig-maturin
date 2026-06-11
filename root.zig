@@ -153,6 +153,7 @@ pub const PyErr_ExceptionMatches = pycall.PyErr_ExceptionMatches;
 pub const PyObject_Repr = pycall.PyObject_Repr;
 pub const PyImport_ImportModule = pycall.PyImport_ImportModule;
 pub const PyImport_GetModuleDict = pycall.PyImport_GetModuleDict;
+pub const PyOS_FSPath = pycall.PyOS_FSPath;
 pub const PyObject_Type = pycall.PyObject_Type;
 pub const PyObject_IsInstance = pycall.PyObject_IsInstance;
 pub const PyObject_CallFunction = pycall.PyObject_CallFunction;

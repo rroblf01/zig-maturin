@@ -181,6 +181,9 @@ pub extern fn PyLong_FromString([*:0]const u8, ?*?[*:0]u8, c_int) callconv(.c) ?
 pub extern fn PyBuffer_FillInfo(?*anyopaque, ?*PyObject, ?*anyopaque, isize, c_int, c_int) callconv(.c) c_int;
 
 pub extern fn PyImport_ImportModule([*:0]const u8) callconv(.c) ?*PyObject;
+// os.fspath(): coerce an os.PathLike (e.g. pathlib.Path) to str/bytes. New ref,
+// or null with TypeError set if the object is not path-like.
+pub extern fn PyOS_FSPath(?*PyObject) callconv(.c) ?*PyObject;
 // Borrowed reference to the interpreter's sys.modules dict (for submodule
 // registration under a dotted "parent.child" name).
 pub extern fn PyImport_GetModuleDict() callconv(.c) ?*PyObject;

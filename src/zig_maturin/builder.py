@@ -275,6 +275,13 @@ def build_project(
         # can't import the artifact, so this returns None and is skipped.
         pyi = extract_stub(built_so, mod_name, so_suffix)
 
+        # Mixed Python/Zig layout: if `<python_source>/<module_name>/` is a
+        # package, ship it and nest the extension inside it.
+        pkg_src = root / config.python_source / mod_name
+        py_package = pkg_src if (pkg_src / "__init__.py").exists() else None
+        if py_package is not None:
+            print(f"  mixed layout: bundling Python package {pkg_src}")
+
         wheel_path = build_wheel(
             module_name=mod_name,
             version=config.version,
@@ -290,12 +297,15 @@ def build_project(
             license=config.license,
             classifiers=config.classifiers,
             pyi=pyi,
+            py_package=py_package,
         )
         wheels.append(wheel_path)
         print(f"Created wheel: {wheel_path}")
 
         if develop:
-            install_wheel_develop(wheel_path, mod_name, built_so, so_suffix)
+            install_wheel_develop(
+                wheel_path, mod_name, built_so, so_suffix, py_package=py_package
+            )
 
     return wheels
 
@@ -390,7 +400,11 @@ def build_sdist(config: ZigMaturinConfig, out: str = "dist") -> Path:
 
 
 def install_wheel_develop(
-    wheel_path: Path, mod_name: str, so_path: Path, so_suffix: str = ".so"
+    wheel_path: Path,
+    mod_name: str,
+    so_path: Path,
+    so_suffix: str = ".so",
+    py_package: Path | None = None,
 ) -> None:
     site_packages = Path(
         subprocess.check_output(
@@ -399,8 +413,20 @@ def install_wheel_develop(
         ).strip()
     )
 
-    dest = site_packages / f"{mod_name}{so_suffix}"
     import shutil
 
+    if py_package is not None:
+        # Mixed layout: copy the package tree, then nest the extension in it.
+        pkg_dest = site_packages / mod_name
+        if pkg_dest.exists():
+            shutil.rmtree(pkg_dest)
+        shutil.copytree(
+            py_package, pkg_dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+        )
+        shutil.copy2(so_path, pkg_dest / f"{mod_name}{so_suffix}")
+        print(f"Installed package {mod_name} (+ extension) -> {pkg_dest}")
+        return
+
+    dest = site_packages / f"{mod_name}{so_suffix}"
     shutil.copy2(so_path, dest)
     print(f"Installed {so_path.name} -> {dest}")

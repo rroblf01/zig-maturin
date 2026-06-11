@@ -30,6 +30,7 @@ pub const PyCell = pycell.PyCell;
 pub const pyFn = funcwrap.pyFn;
 pub const pyFnNamed = funcwrap.pyFnNamed;
 pub const pyFnKw = funcwrap.pyFnKw;
+pub const pyFnRaw = funcwrap.pyFnRaw;
 pub const wrap = funcwrap.wrap;
 pub const wrapNamed = funcwrap.wrapNamed;
 pub const wrapMethodNamed = pyclass.wrapMethodNamed;
@@ -75,6 +76,14 @@ pub const Py_DECREF = zm.Py_DECREF;
 pub const Py_XINCREF = zm.Py_XINCREF;
 pub const Py_XDECREF = zm.Py_XDECREF;
 pub const Py_None = zm.Py_None;
+
+// Raw container/scalar accessors, for `pyFnRaw` variadic functions that walk the
+// argument tuple / keyword dict directly.
+pub const PyTuple_Size = zm.PyTuple_Size;
+pub const PyTuple_GetItem = zm.PyTuple_GetItem;
+pub const PyDict_GetItemString = zm.PyDict_GetItemString;
+pub const PyLong_FromLongLong = zm.PyLong_FromLongLong;
+pub const PyLong_AsLongLong = zm.PyLong_AsLongLong;
 
 pub const PyObject = zm.PyObject;
 pub const PyMethodDef = zm.PyMethodDef;

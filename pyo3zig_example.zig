@@ -552,14 +552,31 @@ fn cmul(a: std.math.Complex(f64), b: std.math.Complex(f64)) std.math.Complex(f64
 // and raisable from Zig.
 const DemoError = pz.exceptionClass("pyo3zig_demo.DemoError", pz.PyExc_ValueError);
 
-// Returns null with DemoError set when n is negative (the wrapper turns a null
-// return + set error indicator into a raised Python exception).
-fn check_positive(n: i64) ?i64 {
+// Raises DemoError when n is negative. `raise` sets the error indicator to the
+// custom type; returning an error then propagates that already-set exception
+// (the framework respects an indicator that is already set).
+fn check_positive(n: i64) !i64 {
     if (n < 0) {
         DemoError.raise("value must be non-negative");
-        return null;
+        return error.Negative;
     }
     return n;
+}
+
+// Variadic: sums every positional argument, plus a "bonus" keyword if present.
+fn sum_all(args: ?*pz.PyObject, kwargs: ?*pz.PyObject) i64 {
+    var total: i64 = 0;
+    const n = pz.PyTuple_Size(args);
+    var i: isize = 0;
+    while (i < n) : (i += 1) {
+        total += pz.PyLong_AsLongLong(pz.PyTuple_GetItem(args, i));
+    }
+    if (kwargs) |kw| {
+        if (pz.PyDict_GetItemString(kw, "bonus")) |b| {
+            total += pz.PyLong_AsLongLong(b);
+        }
+    }
+    return total;
 }
 
 // A class holding a Python object reference -> participates in cyclic GC. The
@@ -942,8 +959,10 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("dt_year", dt_year),
         pz.pyFnNamed("next_day", next_day),
         pz.pyFnNamed("cmul", cmul),
+        pz.pyFnNamed("check_positive", check_positive),
+        pz.pyFnRaw("sum_all", sum_all),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass, AwaiterClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass, AwaiterClass, DemoError },
 });
 
 comptime {

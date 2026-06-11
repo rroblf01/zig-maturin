@@ -346,6 +346,24 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                         const size = zm.PyByteArray_Size(obj);
                         return buf[0..@as(usize, @intCast(size))];
                     }
+                    // os.PathLike (e.g. pathlib.Path): coerce via os.fspath. The
+                    // result is a fresh object, so copy its bytes into the call
+                    // arena (the borrowed-buffer approach would dangle once we
+                    // drop our reference).
+                    if (zm.PyOS_FSPath(obj)) |path_obj| {
+                        defer zm.Py_XDECREF(path_obj);
+                        const src: []const u8 = if (zm.PyUnicode_Check(path_obj) != 0) blk: {
+                            const c = zm.PyUnicode_AsUTF8(path_obj) orelse return error.PythonValueError;
+                            break :blk std.mem.sliceTo(c, 0);
+                        } else blk: {
+                            var b: [*]u8 = undefined;
+                            var n: isize = undefined;
+                            if (zm.PyBytes_AsStringAndSize(path_obj, &b, &n) != 0) return error.PythonValueError;
+                            break :blk b[0..@as(usize, @intCast(n))];
+                        };
+                        return allocator.dupe(u8, src) catch return error.MemoryError;
+                    }
+                    zm.PyErr_Clear(); // discard fspath's TypeError; raise our own
                     raiseTypeError(T, obj);
                     return error.PythonTypeError;
                 }

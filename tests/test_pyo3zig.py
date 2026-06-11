@@ -631,6 +631,27 @@ try:
 except TypeError as e:
     check("complex type error", "complex" in str(e), str(e))
 
+# test_custom_exception (exceptionClass: subclass of ValueError, raisable from Zig)
+check("custom exception registered", isinstance(m.DemoError, type))
+check("custom exception subclasses ValueError", issubclass(m.DemoError, ValueError))
+check("custom exception __module__", m.DemoError.__module__ == "pyo3zig_demo")
+check("check_positive ok path", m.check_positive(5) == 5)
+try:
+    m.check_positive(-1)
+    check("custom exception raised", False, "no exception")
+except m.DemoError as e:
+    check("custom exception raised", "non-negative" in str(e), str(e))
+
+# test_pathlike (os.PathLike argument coerced via os.fspath)
+import pathlib  # noqa: E402
+
+check("Path argument coerced", m.greet(pathlib.PurePath("/tmp/x")) == "Hello, /tmp/x!")
+
+# test_variadic (pyFnRaw: raw *args / **kwargs)
+check("variadic no args", m.sum_all() == 0)
+check("variadic positional", m.sum_all(1, 2, 3) == 6)
+check("variadic with kwarg bonus", m.sum_all(1, 2, bonus=10) == 13)
+
 # test_call_kwargs
 adder = m.Adder(10)
 check("call positional + default", adder(5) == 15)

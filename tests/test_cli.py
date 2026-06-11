@@ -42,6 +42,19 @@ def test_cli_build_exposes_abi3_flag():
     assert "stable-ABI" in result.stdout
 
 
+def test_generate_ci_workflow_is_valid_yaml():
+    from zig_maturin.ci_template import generate_wheels_workflow
+
+    pytest = __import__("pytest")
+    yaml = pytest.importorskip("yaml")
+    content = generate_wheels_workflow("mypkg")
+    doc = yaml.safe_load(content)
+    assert set(doc["jobs"]) == {"wheels", "sdist", "publish"}
+    assert "${{" in content  # GitHub Actions expressions preserved
+    assert "{project}" not in content  # template fully rendered
+    assert "mypkg" in content
+
+
 def test_scaffold_creates_project():
     with tempfile.TemporaryDirectory() as tmp:
         result = subprocess.run(
