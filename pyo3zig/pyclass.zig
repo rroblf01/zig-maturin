@@ -461,8 +461,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 if (@hasDecl(T, "__deinit__")) {
                     Cell.ptrFromObj(o).__deinit__();
                 }
-                // Release the framework-owned references to PyObject fields.
+                // Release the framework-owned references to PyObject fields and
+                // the managed __dict__.
                 if (is_gc) releaseFields(T, o);
+                if (is_gc) zm.pyo3zig_ClearManagedDict(o);
                 if (is_gc) {
                     zm.PyObject_GC_Del(@as(?*anyopaque, @ptrCast(o)));
                 } else {
@@ -1422,7 +1424,9 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     };
 
     // GC support for classes holding PyObject fields: visit fields in traverse,
-    // clear them in clear (breaks reference cycles).
+    // clear them in clear (breaks reference cycles). GC classes also get a
+    // managed __dict__ (arbitrary Python attributes), which must be visited and
+    // cleared alongside the fields.
     const GcWrapper = struct {
         fn traverse(self_obj: ?*zm.PyObject, visit: zm.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
             const ptr = Cell.ptrFromObj(self_obj);
@@ -1434,10 +1438,13 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     }
                 }
             }
+            const dr = zm.pyo3zig_VisitManagedDict(self_obj, visit, arg);
+            if (dr != 0) return dr;
             return 0;
         }
         fn clear(self_obj: ?*zm.PyObject) callconv(.c) c_int {
             releaseFields(T, self_obj);
+            zm.pyo3zig_ClearManagedDict(self_obj);
             return 0;
         }
     };
@@ -1449,7 +1456,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             const fields = comptime std.meta.fields(T);
             const field_count = fields.len;
             const prop_count = if (has_properties) config.properties.len else 0;
-            const defs_count = field_count + prop_count + 1;
+            // +1 for the __dict__ descriptor on GC classes (managed dict), +1
+            // sentinel.
+            const dict_count = if (is_gc) 1 else 0;
+            const defs_count = field_count + prop_count + dict_count + 1;
 
             const getset_ptr = zm.PyMem_RawMalloc(@sizeOf(zm.PyGetSetDef) * defs_count);
             if (getset_ptr == null) {
@@ -1561,6 +1571,19 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                         .closure = null,
                     };
                 }
+            }
+
+            // Expose the managed __dict__ on GC classes so dir()/vars() and
+            // obj.__dict__ work (the attributes themselves already round-trip
+            // through generic get/setattr).
+            if (is_gc) {
+                getset_defs[field_count + prop_count] = .{
+                    .name = "__dict__",
+                    .get = @ptrCast(&zm.PyObject_GenericGetDict),
+                    .set = @ptrCast(&zm.PyObject_GenericSetDict),
+                    .doc = null,
+                    .closure = null,
+                };
             }
 
             // Auto-registered plain methods: dunders that CPython looks up by
@@ -1961,6 +1984,9 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             // pre-header, which only exists for GC types — so this is gated on
             // HAVE_GC. A custom dealloc clears it via PyObject_ClearWeakRefs.
             if (is_gc) flags |= zm.Py_TPFLAGS_MANAGED_WEAKREF;
+            // GC classes also get a managed __dict__ so instances accept
+            // arbitrary Python attributes (the dict lives in the GC pre-header).
+            if (is_gc) flags |= zm.Py_TPFLAGS_MANAGED_DICT;
 
             var spec = zm.PyType_Spec{
                 .name = type_name,

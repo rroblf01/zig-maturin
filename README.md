@@ -201,7 +201,9 @@ Every class is also subscriptable for type hints — `MyClass[int]` yields a
 `Py_TPFLAGS_HAVE_GC` with `tp_traverse`/`tp_clear`, so reference cycles are
 collectable. The framework owns one reference per field (incref on set, decref
 on clear/dealloc); don't manually decref those fields in `__deinit__`. These GC
-classes also support `weakref.ref(obj)` (managed weakref, cleared on dealloc).
+classes also support `weakref.ref(obj)` and a managed `__dict__` (arbitrary
+Python attributes, GC-traced) — both cleared on dealloc. Value classes (no
+PyObject field) have neither, keeping instances minimal.
 
 **Subclassing from Python:** value classes (no `__deinit__`, no PyObject fields)
 set `Py_TPFLAGS_BASETYPE`, so Python code can `class Sub(MyClass): ...` and

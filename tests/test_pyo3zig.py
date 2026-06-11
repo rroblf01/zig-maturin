@@ -716,6 +716,33 @@ _mv[3] = 99
 check("buffer writes reach object", _mb.get(0) == 42 and _mb.get(3) == 99)
 check("read-only buffer still readonly", memoryview(m.Bytes8(7)).readonly is True)
 
+# test_managed_dict
+_nd = m.Node()
+_nd.label = "hello"
+_nd.count = 42
+check("GC class arbitrary attrs", _nd.label == "hello" and _nd.count == 42)
+check("GC class __dict__", _nd.__dict__ == {"label": "hello", "count": 42})
+check("GC class vars()", vars(_nd) == {"label": "hello", "count": 42})
+_nd.__dict__ = {"x": 1}
+check("GC class __dict__ assignment", _nd.x == 1 and not hasattr(_nd, "label"))
+check("value class has no __dict__", not hasattr(m.Vec2(1, 2), "__dict__"))
+# attributes stored in the dict are GC-traced (cycle through dict collectable)
+_a = m.Node()
+_b = m.Node()
+_a.peer = _b
+_b.peer = _a
+del _a, _b
+gc.collect()
+check("cycle through managed dict collectable", True)
+# stress the dict alloc/clear path so the Valgrind gate catches a leak
+for _i in range(500):
+    _t = m.Node()
+    _t.a = _i
+    _t.b = "x" * (_i % 8)
+    del _t
+gc.collect()
+check("managed dict stress (no leak)", True)
+
 total = passed + failed
 print(
     f"\nResults: {passed}/{total} passed"

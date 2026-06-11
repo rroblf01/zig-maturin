@@ -99,6 +99,9 @@ pub extern fn pyo3zig_make_ready_awaitable(?*PyObject) callconv(.c) ?*PyObject;
 pub extern fn pyo3zig_make_stop_async_awaitable() callconv(.c) ?*PyObject;
 // types.GenericAlias for __class_getitem__ (MyClass[int] in type hints).
 pub extern fn pyo3zig_GenericAlias(?*PyObject, ?*PyObject) callconv(.c) ?*PyObject;
+// Managed __dict__ traverse/clear (for GC classes with arbitrary attributes).
+pub extern fn pyo3zig_VisitManagedDict(?*PyObject, visitproc, ?*anyopaque) callconv(.c) c_int;
+pub extern fn pyo3zig_ClearManagedDict(?*PyObject) callconv(.c) void;
 
 // weakref clearing: must run in a custom tp_dealloc before teardown so any
 // live weak references to the object are invalidated.
@@ -175,6 +178,9 @@ pub extern fn PyErr_ExceptionMatches(?*PyObject) callconv(.c) c_int;
 // Default attribute access (used as fallback by __getattr__/__setattr__).
 pub extern fn PyObject_GenericGetAttr(?*PyObject, ?*PyObject) callconv(.c) ?*PyObject;
 pub extern fn PyObject_GenericSetAttr(?*PyObject, ?*PyObject, ?*PyObject) callconv(.c) c_int;
+// Exposes the (managed) __dict__ as a getset descriptor.
+pub extern fn PyObject_GenericGetDict(?*PyObject, ?*anyopaque) callconv(.c) ?*PyObject;
+pub extern fn PyObject_GenericSetDict(?*PyObject, ?*PyObject, ?*anyopaque) callconv(.c) c_int;
 
 // Build an int from a decimal string (used for integers wider than 64 bits).
 pub extern fn PyLong_FromString([*:0]const u8, ?*?[*:0]u8, c_int) callconv(.c) ?*PyObject;

@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **Arbitrary attributes on GC classes (managed `__dict__`)**: a class with a
+  `?*pz.PyObject` field now also carries a managed `__dict__`, so instances
+  accept any Python attribute (`node.label = ...`), expose `__dict__`/`vars()`,
+  and the dict's contents are GC-traced (cycles through it are collectable).
 - **Writable buffer protocol** (`__buffer_mut__(self) []u8`): exposes a
   mutable zero-copy view, so `memoryview`/numpy can write into the instance
   (read-only `__buffer__` is unchanged).
@@ -108,8 +112,11 @@ All notable changes to this project are documented here. The format is based on
 - **Inheriting a built-in base** (e.g. custom `Exception` subclasses) and
   subclassing classes that need a custom destructor — both need teardown
   orchestration beyond this release.
-- **weakref for non-GC value classes** (managed weakref needs the GC pre-header;
-  a value class would need an explicit `tp_weaklistoffset` field instead).
+- **weakref and `__dict__` for non-GC value classes**: both need the GC
+  pre-header. A value class could only get them via an explicit
+  `tp_weaklistoffset`/`tp_dictoffset` field plus a subclass-safe custom dealloc
+  (a `subtype_dealloc` equivalent) — out of scope. Add a `?*pz.PyObject` field to
+  make the class GC and get both. (weakref/`__dict__` work on GC classes today.)
 - **Suspending coroutines**: awaitables resolve immediately (`__await__` /
   `__anext__` are *ready*); true suspension would need a coroutine driver that
   yields to the event loop.

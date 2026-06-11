@@ -80,6 +80,23 @@ PyObject* pyo3zig_GenericAlias(PyObject* origin, PyObject* item) {
     return Py_GenericAlias(origin, item);
 }
 
+/* Managed __dict__ helpers. The public PyObject_*ManagedDict names landed in
+ * 3.13; 3.12 has the underscore-prefixed variants. */
+int pyo3zig_VisitManagedDict(PyObject* o, visitproc v, void* a) {
+#if PY_VERSION_HEX >= 0x030D0000
+    return PyObject_VisitManagedDict(o, v, a);
+#else
+    return _PyObject_VisitManagedDict(o, v, a);
+#endif
+}
+void pyo3zig_ClearManagedDict(PyObject* o) {
+#if PY_VERSION_HEX >= 0x030D0000
+    PyObject_ClearManagedDict(o);
+#else
+    _PyObject_ClearManagedDict(o);
+#endif
+}
+
 /* --- Panic safety net -----------------------------------------------------
  * Zig has no stack unwinding, so a panic would normally abort the whole
  * interpreter. pz_guard() runs the extension body inside a setjmp frame; the
