@@ -548,6 +548,20 @@ fn cmul(a: std.math.Complex(f64), b: std.math.Complex(f64)) std.math.Complex(f64
     return a.mul(b);
 }
 
+// A custom exception type (subclass of ValueError), registered in the module
+// and raisable from Zig.
+const DemoError = pz.exceptionClass("pyo3zig_demo.DemoError", pz.PyExc_ValueError);
+
+// Returns null with DemoError set when n is negative (the wrapper turns a null
+// return + set error indicator into a raised Python exception).
+fn check_positive(n: i64) ?i64 {
+    if (n < 0) {
+        DemoError.raise("value must be non-negative");
+        return null;
+    }
+    return n;
+}
+
 // A class holding a Python object reference -> participates in cyclic GC. The
 // framework owns the `next` reference, visits it in tp_traverse, and clears it
 // in tp_clear, so reference cycles are collectable.

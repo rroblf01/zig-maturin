@@ -2076,3 +2076,42 @@ pub fn enumClass(comptime E: type, comptime name: [:0]const u8) type {
         }
     };
 }
+
+/// A custom Python exception type, registerable in a module's `.classes` and
+/// raisable from Zig. `qualified_name` must be "module.ClassName" (PyErr_New-
+/// Exception requires the dot). `base_fn` is a function returning the base
+/// exception type (e.g. `zm.PyExc_ValueError`) or `null` for `Exception`.
+///
+///     const MyError = pz.exceptionClass("mymod.MyError", null);
+///     // in .classes = &.{ ..., MyError }
+///     // raise from Zig: MyError.raise("something went wrong");
+pub fn exceptionClass(comptime qualified_name: [:0]const u8, comptime base_fn: anytype) type {
+    return struct {
+        // Borrowed for the process: the module attribute keeps the type alive.
+        var cached: ?*zm.PyObject = null;
+
+        pub fn py_type_obj() ?*zm.PyObject {
+            const base: ?*zm.PyObject = if (@TypeOf(base_fn) == @TypeOf(null)) null else base_fn();
+            const t = zm.PyErr_NewException(
+                @as([*:0]const u8, @ptrCast(qualified_name.ptr)),
+                base,
+                null,
+            ) orelse return null;
+            cached = t;
+            return t;
+        }
+        pub fn class_name() [*:0]const u8 {
+            const dot = std.mem.lastIndexOfScalar(u8, qualified_name, '.');
+            const short = if (dot) |d| qualified_name[d + 1 ..] else qualified_name[0..];
+            return @as([*:0]const u8, @ptrCast(short.ptr));
+        }
+        /// The created exception type object (null before module init).
+        pub fn get() ?*zm.PyObject {
+            return cached;
+        }
+        /// Raise this exception with a message (sets the Python error indicator).
+        pub fn raise(msg: [*:0]const u8) void {
+            zm.PyErr_SetString(cached orelse zm.PyExc_Exception(), msg);
+        }
+    };
+}

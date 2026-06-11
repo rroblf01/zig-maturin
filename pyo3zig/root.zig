@@ -25,6 +25,7 @@ pub const pyModule = module.pyModule;
 pub const exportModule = module.exportModule;
 pub const PyClass = pyclass.PyClass;
 pub const enumClass = pyclass.enumClass;
+pub const exceptionClass = pyclass.exceptionClass;
 pub const PyCell = pycell.PyCell;
 pub const pyFn = funcwrap.pyFn;
 pub const pyFnNamed = funcwrap.pyFnNamed;
