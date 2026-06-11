@@ -51,6 +51,31 @@ python -c "import my_extension; print(my_extension.hello())"
 zig-maturin build                   # produce a wheel in dist/
 ```
 
+Scaffolded projects use the **PEP 517 backend**
+(`build-backend = "zig_maturin.buildapi"`), so the standard tools work too —
+`pip install .`, `pip wheel .`, `python -m build` — with Zig on PATH:
+
+```bash
+pip install .                       # builds + installs the extension
+python -m build                     # wheel + sdist in dist/
+```
+
+### One wheel for all CPython versions (abi3)
+
+Set `abi3` in `[tool.zig-maturin]` to build against the stable ABI and ship a
+single `cp312-abi3-<platform>` wheel that works on that CPython and every later
+version:
+
+```toml
+[tool.zig-maturin]
+abi3 = "3.12"
+```
+
+The framework already uses out-of-line refcounting and accessor functions (not
+inline macros), so abi3 adds ~no runtime overhead here. Managed `__dict__` and
+weakref need the GC pre-header and are unavailable under abi3 (cyclic GC of
+`?*pz.PyObject` fields still works).
+
 ## Writing an extension
 
 A module is declared with `pyModule` and exported with `exportModule`:

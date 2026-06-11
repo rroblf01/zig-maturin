@@ -175,16 +175,6 @@ pub const Py_am_await = pytypes.Py_am_await;
 pub const Py_am_aiter = pytypes.Py_am_aiter;
 pub const Py_am_anext = pytypes.Py_am_anext;
 
-pub const PyDateTime_Import = pycall.PyDateTime_Import;
-pub const pyo3zig_PyDateTime_Check = pycall.pyo3zig_PyDateTime_Check;
-pub const pyo3zig_DateTime_New = pycall.pyo3zig_DateTime_New;
-pub const pyo3zig_DateTime_year = pycall.pyo3zig_DateTime_year;
-pub const pyo3zig_DateTime_month = pycall.pyo3zig_DateTime_month;
-pub const pyo3zig_DateTime_day = pycall.pyo3zig_DateTime_day;
-pub const pyo3zig_DateTime_hour = pycall.pyo3zig_DateTime_hour;
-pub const pyo3zig_DateTime_minute = pycall.pyo3zig_DateTime_minute;
-pub const pyo3zig_DateTime_second = pycall.pyo3zig_DateTime_second;
-pub const pyo3zig_DateTime_microsecond = pycall.pyo3zig_DateTime_microsecond;
 
 pub const Py_XNewRef = pycall.Py_XNewRef;
 

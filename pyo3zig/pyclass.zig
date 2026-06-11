@@ -1,6 +1,13 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const zm = @import("zig-maturin");
 const pycell = @import("pycell.zig");
+
+// Under the Limited API (abi3), the managed-dict traverse/clear helpers and the
+// __dict__ descriptor aren't available, so a GC class skips its managed dict
+// (cyclic GC of its PyObject fields still works). Managed weakref is also gated
+// off to stay strictly within the stable ABI.
+const abi3 = build_options.abi3;
 const funcwrap = @import("funcwrap.zig");
 const conversion = @import("conversion.zig");
 const errors = @import("errors.zig");
@@ -1466,9 +1473,9 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             const fields = comptime std.meta.fields(T);
             const field_count = fields.len;
             const prop_count = if (has_properties) config.properties.len else 0;
-            // +1 for the __dict__ descriptor on GC classes (managed dict), +1
-            // sentinel.
-            const dict_count = if (is_gc) 1 else 0;
+            // +1 for the __dict__ descriptor on GC classes (managed dict; not
+            // under abi3), +1 sentinel.
+            const dict_count = if (is_gc and !abi3) 1 else 0;
             const defs_count = field_count + prop_count + dict_count + 1;
 
             const getset_ptr = zm.PyMem_RawMalloc(@sizeOf(zm.PyGetSetDef) * defs_count);
@@ -1586,7 +1593,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             // Expose the managed __dict__ on GC classes so dir()/vars() and
             // obj.__dict__ work (the attributes themselves already round-trip
             // through generic get/setattr).
-            if (is_gc) {
+            if (is_gc and !abi3) {
                 getset_defs[field_count + prop_count] = .{
                     .name = "__dict__",
                     .get = @ptrCast(&zm.PyObject_GenericGetDict),
@@ -1994,10 +2001,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             // weakref.ref(obj). The weaklist lives in CPython's managed
             // pre-header, which only exists for GC types — so this is gated on
             // HAVE_GC. A custom dealloc clears it via PyObject_ClearWeakRefs.
-            if (is_gc) flags |= zm.Py_TPFLAGS_MANAGED_WEAKREF;
+            if (is_gc and !abi3) flags |= zm.Py_TPFLAGS_MANAGED_WEAKREF;
             // GC classes also get a managed __dict__ so instances accept
             // arbitrary Python attributes (the dict lives in the GC pre-header).
-            if (is_gc) flags |= zm.Py_TPFLAGS_MANAGED_DICT;
+            if (is_gc and !abi3) flags |= zm.Py_TPFLAGS_MANAGED_DICT;
 
             var spec = zm.PyType_Spec{
                 .name = type_name,

@@ -559,18 +559,25 @@ check("__getstate__", t.__getstate__() == 37)
 t.__setstate__(99)
 check("__setstate__", t.__getstate__() == 99)
 
-# test_weakref
-node = m.Node()
-ref = weakref.ref(node)
-check("weakref deref (GC class)", ref() is node)
-del node
-gc.collect()
-check("weakref cleared on dealloc", ref() is None)
+# test_weakref (GC classes support weakref under the full API; gated off under
+# abi3, which stays within the stable ABI).
 try:
-    weakref.ref(m.Greeter(1))
-    check("weakref rejected for value class", False, "no exception")
+    weakref.ref(m.Node())
+    _weakref_ok = True
 except TypeError:
-    check("weakref rejected for value class", True)
+    _weakref_ok = False
+if _weakref_ok:
+    node = m.Node()
+    ref = weakref.ref(node)
+    check("weakref deref (GC class)", ref() is node)
+    del node
+    gc.collect()
+    check("weakref cleared on dealloc", ref() is None)
+    try:
+        weakref.ref(m.Greeter(1))
+        check("weakref rejected for value class", False, "no exception")
+    except TypeError:
+        check("weakref rejected for value class", True)
 
 # test_enum_conversion
 check("enum next red->green", m.next_color(0) == 1)
@@ -716,32 +723,35 @@ _mv[3] = 99
 check("buffer writes reach object", _mb.get(0) == 42 and _mb.get(3) == 99)
 check("read-only buffer still readonly", memoryview(m.Bytes8(7)).readonly is True)
 
-# test_managed_dict
-_nd = m.Node()
-_nd.label = "hello"
-_nd.count = 42
-check("GC class arbitrary attrs", _nd.label == "hello" and _nd.count == 42)
-check("GC class __dict__", _nd.__dict__ == {"label": "hello", "count": 42})
-check("GC class vars()", vars(_nd) == {"label": "hello", "count": 42})
-_nd.__dict__ = {"x": 1}
-check("GC class __dict__ assignment", _nd.x == 1 and not hasattr(_nd, "label"))
-check("value class has no __dict__", not hasattr(m.Vec2(1, 2), "__dict__"))
-# attributes stored in the dict are GC-traced (cycle through dict collectable)
-_a = m.Node()
-_b = m.Node()
-_a.peer = _b
-_b.peer = _a
-del _a, _b
-gc.collect()
-check("cycle through managed dict collectable", True)
-# stress the dict alloc/clear path so the Valgrind gate catches a leak
-for _i in range(500):
-    _t = m.Node()
-    _t.a = _i
-    _t.b = "x" * (_i % 8)
-    del _t
-gc.collect()
-check("managed dict stress (no leak)", True)
+# test_managed_dict (managed __dict__ is a full-API feature; gated off under
+# abi3, where GC classes still collect cycles through their fields).
+_managed_dict = hasattr(m.Node(), "__dict__")
+if _managed_dict:
+    _nd = m.Node()
+    _nd.label = "hello"
+    _nd.count = 42
+    check("GC class arbitrary attrs", _nd.label == "hello" and _nd.count == 42)
+    check("GC class __dict__", _nd.__dict__ == {"label": "hello", "count": 42})
+    check("GC class vars()", vars(_nd) == {"label": "hello", "count": 42})
+    _nd.__dict__ = {"x": 1}
+    check("GC class __dict__ assignment", _nd.x == 1 and not hasattr(_nd, "label"))
+    check("value class has no __dict__", not hasattr(m.Vec2(1, 2), "__dict__"))
+    # attributes stored in the dict are GC-traced (cycle collectable)
+    _a = m.Node()
+    _b = m.Node()
+    _a.peer = _b
+    _b.peer = _a
+    del _a, _b
+    gc.collect()
+    check("cycle through managed dict collectable", True)
+    # stress the dict alloc/clear path so the Valgrind gate catches a leak
+    for _i in range(500):
+        _t = m.Node()
+        _t.a = _i
+        _t.b = "x" * (_i % 8)
+        del _t
+    gc.collect()
+    check("managed dict stress (no leak)", True)
 
 # test_await_delegate (real suspension)
 async def _deleg_sleep():
@@ -824,13 +834,14 @@ del _ca, _cb
 gc.collect()
 check("cycle through subclass collectable", m.get_node_deinit_count() >= _cyc_before + 2)
 
-# weakref on a subclass instance.
-_wsn = _SubNode()
-_wref = weakref.ref(_wsn)
-check("weakref on subclass", _wref() is _wsn)
-del _wsn
-gc.collect()
-check("weakref on subclass cleared", _wref() is None)
+# weakref on a subclass instance (full API only).
+if _weakref_ok:
+    _wsn = _SubNode()
+    _wref = weakref.ref(_wsn)
+    check("weakref on subclass", _wref() is _wsn)
+    del _wsn
+    gc.collect()
+    check("weakref on subclass cleared", _wref() is None)
 
 total = passed + failed
 print(

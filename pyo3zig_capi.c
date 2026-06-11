@@ -1,31 +1,15 @@
 #include <Python.h>
-#include <datetime.h>
 #include <setjmp.h>
 #include <string.h>
-
-/* --- datetime C-API -------------------------------------------------------
- * PyDateTime_* are macros over a capsule pointer that must be initialized once
- * with PyDateTime_IMPORT before any use. The module init calls the import. */
-int pyo3zig_PyDateTime_Import(void) { PyDateTime_IMPORT; return PyDateTimeAPI ? 0 : -1; }
-int pyo3zig_PyDateTime_Check(PyObject* o) { return PyDateTime_Check(o); }
-PyObject* pyo3zig_DateTime_New(int y, int mo, int d, int h, int mi, int s, int us) {
-    return PyDateTime_FromDateAndTime(y, mo, d, h, mi, s, us);
-}
-int pyo3zig_DateTime_year(PyObject* o) { return PyDateTime_GET_YEAR(o); }
-int pyo3zig_DateTime_month(PyObject* o) { return PyDateTime_GET_MONTH(o); }
-int pyo3zig_DateTime_day(PyObject* o) { return PyDateTime_GET_DAY(o); }
-int pyo3zig_DateTime_hour(PyObject* o) { return PyDateTime_DATE_GET_HOUR(o); }
-int pyo3zig_DateTime_minute(PyObject* o) { return PyDateTime_DATE_GET_MINUTE(o); }
-int pyo3zig_DateTime_second(PyObject* o) { return PyDateTime_DATE_GET_SECOND(o); }
-int pyo3zig_DateTime_microsecond(PyObject* o) { return PyDateTime_DATE_GET_MICROSECOND(o); }
 
 /* --- Ready awaitable ------------------------------------------------------
  * A one-shot awaitable iterator: the first iteration raises StopIteration with
  * the carried value, so `await obj` resolves to it immediately. CPython has no
- * public helper for this, so we ship a tiny iterator type. The Zig am_await
+ * public helper for this, so we ship a tiny iterator type built via
+ * PyType_FromSpec (so it compiles under the Limited API too). The Zig am_await
  * wrapper builds one from the user's __await__ return value. */
 typedef struct {
-    PyObject_HEAD
+    PyObject ob_base;
     PyObject* value;
     int is_stop; /* 1 -> raise StopAsyncIteration instead of returning value */
 } PzReadyAwaitable;
@@ -42,25 +26,33 @@ static PyObject* pzra_iternext(PyObject* self) {
 static PyObject* pzra_iter(PyObject* self) { Py_INCREF(self); return self; }
 static void pzra_dealloc(PyObject* self) {
     Py_XDECREF(((PzReadyAwaitable*)self)->value);
-    Py_TYPE(self)->tp_free(self);
+    freefunc tp_free = (freefunc)PyType_GetSlot(Py_TYPE(self), Py_tp_free);
+    tp_free(self);
 }
-/* Being its own awaitable (am_await -> self) lets it be the value returned by
- * __anext__ and then `await`ed by the async-for machinery. */
-static PyAsyncMethods pzra_as_async = { .am_await = pzra_iter };
-static PyTypeObject PzReadyAwaitable_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "pyo3zig._ReadyAwaitable",
-    .tp_basicsize = sizeof(PzReadyAwaitable),
-    .tp_flags = Py_TPFLAGS_DEFAULT,
-    .tp_iter = pzra_iter,
-    .tp_iternext = pzra_iternext,
-    .tp_as_async = &pzra_as_async,
-    .tp_dealloc = pzra_dealloc,
+/* am_await -> self lets it be the value returned by __anext__ and then
+ * `await`ed by the async-for machinery. */
+static PyType_Slot pzra_slots[] = {
+    {Py_tp_iter, pzra_iter},
+    {Py_tp_iternext, pzra_iternext},
+    {Py_am_await, pzra_iter},
+    {Py_tp_dealloc, pzra_dealloc},
+    {0, NULL},
 };
+static PyType_Spec pzra_spec = {
+    .name = "pyo3zig._ReadyAwaitable",
+    .basicsize = sizeof(PzReadyAwaitable),
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = pzra_slots,
+};
+static PyObject* pzra_type = NULL; /* created once, kept for the process */
 
 static PyObject* pzra_new(PyObject* value, int is_stop) {
-    if (PyType_Ready(&PzReadyAwaitable_Type) < 0) return NULL;
-    PzReadyAwaitable* a = PyObject_New(PzReadyAwaitable, &PzReadyAwaitable_Type);
+    if (!pzra_type) {
+        pzra_type = PyType_FromSpec(&pzra_spec);
+        if (!pzra_type) return NULL;
+    }
+    PzReadyAwaitable* a =
+        (PzReadyAwaitable*)PyType_GenericAlloc((PyTypeObject*)pzra_type, 0);
     if (!a) return NULL;
     Py_XINCREF(value);
     a->value = value;
@@ -75,13 +67,10 @@ PyObject* pyo3zig_make_ready_awaitable(PyObject* value) { return pzra_new(value,
 PyObject* pyo3zig_make_stop_async_awaitable(void) { return pzra_new(NULL, 1); }
 
 /* Return the await-iterator of an arbitrary awaitable (coroutine, Future, or an
- * object with __await__), mirroring CPython's GET_AWAITABLE. Used to delegate a
- * class's __await__ to a real awaitable so `await obj` truly suspends. */
+ * object with __await__). Every awaitable exposes __await__, so calling it is
+ * uniform and Limited-API-safe. Used to delegate a class's __await__ to a real
+ * awaitable so `await obj` truly suspends. */
 PyObject* pyo3zig_get_await_iter(PyObject* awaitable) {
-    PyTypeObject* t = Py_TYPE(awaitable);
-    if (t->tp_as_async && t->tp_as_async->am_await) {
-        return t->tp_as_async->am_await(awaitable);
-    }
     return PyObject_CallMethod(awaitable, "__await__", NULL);
 }
 
@@ -91,8 +80,16 @@ PyObject* pyo3zig_GenericAlias(PyObject* origin, PyObject* item) {
     return Py_GenericAlias(origin, item);
 }
 
-/* Managed __dict__ helpers. The public PyObject_*ManagedDict names landed in
- * 3.13; 3.12 has the underscore-prefixed variants. */
+/* Managed __dict__ helpers. Not part of the stable ABI, so under the Limited
+ * API they are no-ops (the Zig side does not enable a managed dict in that
+ * mode). The public PyObject_*ManagedDict names landed in 3.13; 3.12 has the
+ * underscore-prefixed variants. */
+#ifdef Py_LIMITED_API
+int pyo3zig_VisitManagedDict(PyObject* o, visitproc v, void* a) {
+    (void)o; (void)v; (void)a; return 0;
+}
+void pyo3zig_ClearManagedDict(PyObject* o) { (void)o; }
+#else
 int pyo3zig_VisitManagedDict(PyObject* o, visitproc v, void* a) {
 #if PY_VERSION_HEX >= 0x030D0000
     return PyObject_VisitManagedDict(o, v, a);
@@ -107,6 +104,7 @@ void pyo3zig_ClearManagedDict(PyObject* o) {
     _PyObject_ClearManagedDict(o);
 #endif
 }
+#endif
 
 /* --- Panic safety net -----------------------------------------------------
  * Zig has no stack unwinding, so a panic would normally abort the whole
@@ -176,8 +174,27 @@ int pz_guard_active(void) { return pz_jmp_active; }
 void pz_panic_longjmp(void) { longjmp(pz_jmp, 1); }
 
 /* tp_name of an object's type — used to build precise TypeError messages
- * ("expected int, got str") without reproducing the PyTypeObject layout. */
+ * ("expected int, got str"). The full API reads tp_name directly; the Limited
+ * API can't touch the struct, so it copies the type's __name__ into a
+ * thread-local buffer (the result is consumed immediately by the caller). */
+#ifdef Py_LIMITED_API
+const char* pz_type_name(PyObject* o) {
+    static _Thread_local char buf[256];
+    buf[0] = 0;
+    PyObject* name = PyType_GetName(Py_TYPE(o)); /* new ref, str */
+    if (name) {
+        const char* s = PyUnicode_AsUTF8AndSize(name, NULL);
+        if (s) {
+            strncpy(buf, s, sizeof(buf) - 1);
+            buf[sizeof(buf) - 1] = 0;
+        }
+        Py_DECREF(name);
+    }
+    return buf;
+}
+#else
 const char* pz_type_name(PyObject* o) { return Py_TYPE(o)->tp_name; }
+#endif
 
 PyObject* pyo3zig_PyExc_TypeError(void) { return PyExc_TypeError; }
 PyObject* pyo3zig_PyExc_ValueError(void) { return PyExc_ValueError; }

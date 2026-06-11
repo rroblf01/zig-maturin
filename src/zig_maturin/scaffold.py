@@ -18,12 +18,15 @@ dependencies = []
 license = {{ text = "MIT" }}
 
 [build-system]
-requires = ["uv_build>=0.11.15,<0.12.0"]
-build-backend = "uv_build"
+requires = ["zig-maturin"]
+build-backend = "zig_maturin.buildapi"
 
 [tool.zig-maturin]
 module-name = "{module_name}"
 zig-source = "src/main.zig"
+# Build one wheel for all CPython >= this version (Limited API / stable ABI).
+# Comment out for per-version (full API) builds.
+# abi3 = "3.12"
 '''
 
 BUILD_ZIG_TEMPLATE = '''\

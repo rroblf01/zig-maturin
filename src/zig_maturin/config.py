@@ -20,6 +20,11 @@ class ZigMaturinConfig:
     python_include: str = ""
     python_libdir: str = ""
     python_lib: str = ""
+    # abi3 / stable ABI: a CPython minimum version like "3.12". When set, the
+    # extension is built against the Limited API and packaged as a single
+    # `cpXY-abi3-<platform>` wheel that works on that version and every later
+    # CPython. Empty = per-version build (full API).
+    abi3: str = ""
 
     @property
     def module_path(self) -> str:
@@ -72,6 +77,7 @@ def read_config() -> ZigMaturinConfig:
     cfg.python_include = tool_zm.get("python-include", "")
     cfg.python_libdir = tool_zm.get("python-libdir", "")
     cfg.python_lib = tool_zm.get("python-lib", "")
+    cfg.abi3 = str(tool_zm.get("abi3", "") or "")
 
     if not cfg.module_name:
         cfg.module_name = project.get("name", "my_module")

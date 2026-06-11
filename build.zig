@@ -10,12 +10,20 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // abi3 / Limited API: a CPython min version like "3.12" builds against the
+    // stable ABI. Empty = full API (per-version).
+    const abi3 = b.option([]const u8, "abi3", "Limited API minimum version, e.g. 3.12") orelse "";
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "abi3", abi3.len > 0);
+    const build_options_mod = build_options.createModule();
+
     const pz_mod = b.addModule("pyo3zig", .{
         .root_source_file = b.path("pyo3zig/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zig-maturin", .module = zm_mod },
+            .{ .name = "build_options", .module = build_options_mod },
         },
     });
 
@@ -50,7 +58,13 @@ pub fn build(b: *std.Build) void {
     else
         getPythonInclude(b);
     pyo3zig_lib.root_module.addIncludePath(python_include);
-    pyo3zig_lib.root_module.addCSourceFile(.{ .file = b.path("pyo3zig_capi.c"), .flags = &.{} });
+    // Under abi3, compile the C shim against the Limited API so the wheel is
+    // forward-compatible. "3.12" -> -DPy_LIMITED_API=0x030c0000.
+    const capi_flags: []const []const u8 = if (abi3.len > 0)
+        &.{b.fmt("-DPy_LIMITED_API={s}", .{limitedApiHex(b, abi3)})}
+    else
+        &.{};
+    pyo3zig_lib.root_module.addCSourceFile(.{ .file = b.path("pyo3zig_capi.c"), .flags = capi_flags });
 
     b.installArtifact(pyo3zig_lib);
 
@@ -92,6 +106,14 @@ fn configurePythonLinkage(
             );
         }
     }
+}
+
+/// "3.12" -> "0x030c0000" (PY_VERSION_HEX form for Py_LIMITED_API).
+fn limitedApiHex(b: *std.Build, ver: []const u8) []const u8 {
+    var it = std.mem.splitScalar(u8, ver, '.');
+    const major = std.fmt.parseInt(u8, it.next() orelse "3", 10) catch 3;
+    const minor = std.fmt.parseInt(u8, it.next() orelse "12", 10) catch 12;
+    return b.fmt("0x{x:0>2}{x:0>2}0000", .{ major, minor });
 }
 
 fn getPythonInclude(b: *std.Build) std.Build.LazyPath {

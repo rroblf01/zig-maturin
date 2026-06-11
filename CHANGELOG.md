@@ -7,6 +7,18 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **PEP 517 build backend** (`zig_maturin.buildapi`): set
+  `build-backend = "zig_maturin.buildapi"` and `pip install .` / `pip wheel .` /
+  `python -m build` work without invoking the CLI (Zig must be on PATH).
+  Implements `build_wheel`, `build_sdist`, and `prepare_metadata_for_build_wheel`.
+- **abi3 / stable ABI (opt-in)**: set `[tool.zig-maturin] abi3 = "3.12"` (or
+  `--config-setting abi3=3.12`) to build one `cp312-abi3-<platform>` wheel that
+  works on that CPython and every later version. The C shim compiles against the
+  Limited API; the one-shot awaitable type is built via `PyType_FromSpec` and
+  datetime goes through the `datetime` module, so both stay stable-ABI. Because
+  the framework already uses out-of-line refcounting and accessor functions, the
+  abi3 runtime overhead is ~0 here. (Managed `__dict__` and weakref need the GC
+  pre-header and are gated off under abi3; cyclic GC of fields still works.)
 - **Every class is subclassable from Python**, including those with `__deinit__`
   or cyclic GC. Teardown moved to `tp_finalize` (running `__deinit__` and
   releasing PyObject fields) so CPython's `subtype_dealloc` owns the actual

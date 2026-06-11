@@ -139,15 +139,16 @@ def python_build_options(config: ZigMaturinConfig, target: str) -> list[str]:
     return opts
 
 
-def target_to_so_suffix(target: str) -> str:
+def target_to_so_suffix(target: str, abi3: bool = False) -> str:
     parts = target.split("-")
     os_part = parts[1] if len(parts) > 1 else "linux"
 
     if os_part == "windows":
+        # Windows extensions are .pyd regardless; the wheel's abi3 tag marks it.
         return ".pyd"
-    elif os_part == "macos":
-        return ".so"
-    return ".so"
+    # The `.abi3.so` suffix makes the loader pick this single file on any
+    # compatible CPython (the stable-ABI naming convention).
+    return ".abi3.so" if abi3 else ".so"
 
 
 def build_project(
@@ -165,6 +166,12 @@ def build_project(
     python_version = f"cp{sys.version_info.major}{sys.version_info.minor}"
     wheels: list[Path] = []
 
+    # abi3: one stable-ABI wheel tagged at the configured minimum version.
+    abi3 = bool(config.abi3)
+    if abi3:
+        abi3_minor = config.abi3.split(".")[1] if "." in config.abi3 else "12"
+        abi3_python_tag = f"cp3{abi3_minor}"
+
     os.makedirs(out, exist_ok=True)
 
     for target in targets:
@@ -177,6 +184,7 @@ def build_project(
             "build",
             f"-Dtarget={target}",
             f"-Doptimize={optimize}",
+            *(["-Dabi3=" + config.abi3] if abi3 else []),
             *python_build_options(config, target),
         ]
         print(f"  $ {' '.join(cmd)}")
@@ -227,8 +235,13 @@ def build_project(
             continue
 
         platform_tag = target_to_platform_tag(target)
-        so_suffix = target_to_so_suffix(target)
-        abi_tag = python_version
+        so_suffix = target_to_so_suffix(target, abi3=abi3)
+        if abi3:
+            python_tag = abi3_python_tag
+            abi_tag = "abi3"
+        else:
+            python_tag = python_version
+            abi_tag = python_version
 
         # Native builds: embed the comptime-generated type stub. Cross builds
         # can't import the artifact, so this returns None and is skipped.
@@ -240,7 +253,7 @@ def build_project(
             description=config.description,
             authors=config.authors,
             so_path=built_so,
-            python_tag=python_version,
+            python_tag=python_tag,
             abi_tag=abi_tag,
             platform_tag=platform_tag,
             so_suffix=so_suffix,
