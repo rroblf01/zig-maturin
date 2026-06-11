@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **Awaitable instances (`__await__`)**: `await obj` resolves to whatever
+  `__await__(self)` returns, via a shipped one-shot awaitable-iterator type.
+  Works with `asyncio.run`. (Ready/immediate resolution — no suspension.)
+- **`enum.IntEnum` classes**: `pz.enumClass(MyEnum, "Name")` exposes a Zig enum
+  as a real Python `IntEnum` (registered in `.classes`); each variant becomes a
+  member (`Color.RED == 0`).
+- **Keyword arguments for `__call__`**: declare `.call_args` (and optional
+  `.call_defaults`) on the class config to call instances with keywords/defaults.
 - **`datetime.datetime` conversion**: a `pz.DateTime` struct (year/month/day +
   optional time fields) maps to/from Python's `datetime.datetime`. The module
   init runs `PyDateTime_IMPORT` so the C-API capsule is ready.
@@ -84,9 +92,11 @@ All notable changes to this project are documented here. The format is based on
   orchestration beyond this release.
 - **weakref for non-GC value classes** (managed weakref needs the GC pre-header;
   a value class would need an explicit `tp_weaklistoffset` field instead).
-- **`async` / `__await__`** (and async iteration): a useful awaitable needs a
-  framework-provided one-shot awaitable-iterator type (CPython exposes no public
-  helper), which is its own piece of work.
+- **Suspending coroutines / async iteration** (`__aiter__`/`__anext__`): only
+  *ready* awaitables are supported (`__await__` resolves immediately); real
+  suspension would need a coroutine driver that yields to the event loop.
+- **Inheriting from a `pz.enumClass`** as a Zig `PyClass` base (the IntEnum is a
+  standalone Python type, not a Zig-backed class).
 - **Subclassing classes that need a custom destructor** (`__deinit__` or GC
   classes): `Py_TPFLAGS_BASETYPE` is set only for value classes, where CPython's
   default dealloc safely handles a subclass's managed `__dict__` and GC.

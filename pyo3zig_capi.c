@@ -19,6 +19,47 @@ int pyo3zig_DateTime_minute(PyObject* o) { return PyDateTime_DATE_GET_MINUTE(o);
 int pyo3zig_DateTime_second(PyObject* o) { return PyDateTime_DATE_GET_SECOND(o); }
 int pyo3zig_DateTime_microsecond(PyObject* o) { return PyDateTime_DATE_GET_MICROSECOND(o); }
 
+/* --- Ready awaitable ------------------------------------------------------
+ * A one-shot awaitable iterator: the first iteration raises StopIteration with
+ * the carried value, so `await obj` resolves to it immediately. CPython has no
+ * public helper for this, so we ship a tiny iterator type. The Zig am_await
+ * wrapper builds one from the user's __await__ return value. */
+typedef struct {
+    PyObject_HEAD
+    PyObject* value;
+} PzReadyAwaitable;
+
+static PyObject* pzra_iternext(PyObject* self) {
+    PyObject* v = ((PzReadyAwaitable*)self)->value;
+    PyErr_SetObject(PyExc_StopIteration, v ? v : Py_None);
+    return NULL;
+}
+static PyObject* pzra_iter(PyObject* self) { Py_INCREF(self); return self; }
+static void pzra_dealloc(PyObject* self) {
+    Py_XDECREF(((PzReadyAwaitable*)self)->value);
+    Py_TYPE(self)->tp_free(self);
+}
+static PyTypeObject PzReadyAwaitable_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "pyo3zig._ReadyAwaitable",
+    .tp_basicsize = sizeof(PzReadyAwaitable),
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_iter = pzra_iter,
+    .tp_iternext = pzra_iternext,
+    .tp_dealloc = pzra_dealloc,
+};
+
+/* Build a ready awaitable carrying `value` (borrows: takes its own reference).
+ * Returns a new reference to the iterator, or NULL with an exception set. */
+PyObject* pyo3zig_make_ready_awaitable(PyObject* value) {
+    if (PyType_Ready(&PzReadyAwaitable_Type) < 0) return NULL;
+    PzReadyAwaitable* a = PyObject_New(PzReadyAwaitable, &PzReadyAwaitable_Type);
+    if (!a) return NULL;
+    Py_XINCREF(value);
+    a->value = value;
+    return (PyObject*)a;
+}
+
 /* --- Panic safety net -----------------------------------------------------
  * Zig has no stack unwinding, so a panic would normally abort the whole
  * interpreter. pz_guard() runs the extension body inside a setjmp frame; the

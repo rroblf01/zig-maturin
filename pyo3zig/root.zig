@@ -24,6 +24,7 @@ pub const classStub = stubgen.classStub;
 pub const pyModule = module.pyModule;
 pub const exportModule = module.exportModule;
 pub const PyClass = pyclass.PyClass;
+pub const enumClass = pyclass.enumClass;
 pub const PyCell = pycell.PyCell;
 pub const pyFn = funcwrap.pyFn;
 pub const pyFnNamed = funcwrap.pyFnNamed;

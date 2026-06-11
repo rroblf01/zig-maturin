@@ -93,6 +93,9 @@ pub fn PyDateTime_Import() c_int {
     return pyo3zig_PyDateTime_Import();
 }
 
+// One-shot awaitable: `await obj` resolves immediately to the carried value.
+pub extern fn pyo3zig_make_ready_awaitable(?*PyObject) callconv(.c) ?*PyObject;
+
 // weakref clearing: must run in a custom tp_dealloc before teardown so any
 // live weak references to the object are invalidated.
 pub extern fn PyObject_ClearWeakRefs(?*PyObject) callconv(.c) void;
@@ -176,6 +179,8 @@ pub extern fn PyLong_FromString([*:0]const u8, ?*?[*:0]u8, c_int) callconv(.c) ?
 // region. Handles format/shape/strides and increfs the exporter; the caller's
 // PyBuffer_Release later decrefs it.
 pub extern fn PyBuffer_FillInfo(?*anyopaque, ?*PyObject, ?*anyopaque, isize, c_int, c_int) callconv(.c) c_int;
+
+pub extern fn PyImport_ImportModule([*:0]const u8) callconv(.c) ?*PyObject;
 
 // Object utilities
 pub extern fn PyObject_GetAttrString(?*PyObject, [*:0]const u8) callconv(.c) ?*PyObject;

@@ -1,7 +1,9 @@
 """Tests for the pyo3zig extension module."""
 
+import asyncio
 import copy
 import datetime
+import enum
 import gc
 import math
 import sys
@@ -598,6 +600,36 @@ try:
     check("datetime type error", False, "no exception")
 except TypeError as e:
     check("datetime type error", "datetime" in str(e), str(e))
+
+# test_call_kwargs
+adder = m.Adder(10)
+check("call positional + default", adder(5) == 15)
+check("call two positional", adder(5, 2) == 20)
+check("call by keyword", adder(x=3) == 13)
+check("call all keywords", adder(x=3, step=4) == 22)
+check("call mixed", adder(7, step=0) == 10)
+
+# test_intenum
+check("Color is IntEnum", issubclass(m.Color, enum.IntEnum))
+check("Color.red == 0", m.Color.red == 0)
+check("Color.green == 1", m.Color.green == 1)
+check("Color.blue == 2", m.Color.blue == 2)
+check("Color(2).name", m.Color(2).name == "blue")
+check("int(Color.green)", int(m.Color.green) == 1)
+check("Color.__module__", m.Color.__module__ == "pyo3zig_demo")
+
+# test_await
+async def _await_task(x):
+    return await x
+
+
+_coro = _await_task(m.Task(21))
+try:
+    _coro.send(None)
+    check("await resolves", False, "coroutine did not finish")
+except StopIteration as e:
+    check("await resolves", e.value == 42, repr(e.value))
+check("asyncio.run awaitable", asyncio.run(_await_task(m.Task(50))) == 100)
 
 total = passed + failed
 print(

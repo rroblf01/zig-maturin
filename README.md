@@ -161,7 +161,8 @@ Register the class in the module's `.classes` field.
 
 - Lifecycle / repr: `init`, `__deinit__` (called on GC), `__str__`, `__repr__`,
   `__hash__`, `__format__` (`format()` / f-string specs), `__call__` (callable
-  instances), `__enter__`/`__exit__` (context manager, `with obj:`), `__reduce__`
+  instances), `__await__` (awaitable; `await obj` resolves to its return value),
+  `__enter__`/`__exit__` (context manager, `with obj:`), `__reduce__`
   (pickle), `__getstate__`/`__setstate__`, `__bytes__` (`bytes(obj)`),
   `__floor__`/`__ceil__`/`__trunc__` (`math.*`), `__round__`, and
   `__copy__`/`__deepcopy__` (`copy.copy`/`copy.deepcopy`, returning a fresh
@@ -209,6 +210,9 @@ const Vec2Class = pz.PyClass(Vec2, .{
     // keyword __init__ with defaults
     .init_args     = &.{ "x", "y" },
     .init_defaults = .{ .y = @as(i64, 0) },
+    // keyword __call__ with defaults (when the class defines __call__)
+    .call_args     = &.{ "k" },
+    .call_defaults = .{ .k = @as(i64, 1) },
     // computed (read-only) properties
     .properties = &.{ .{ .name = "length_sq", .get = vec2_length_sq } },
     .methods = &.{
@@ -223,6 +227,11 @@ const Vec2Class = pz.PyClass(Vec2, .{
 A `classMethod` whose Zig function returns `T` (or `!T`) is treated as an
 **alternative constructor**: the returned struct is wrapped into a fresh
 instance, so `Vec2.from_pair(...)` returns a `Vec2`.
+
+**Enums:** expose a Zig `enum` as a real Python `enum.IntEnum` with
+`pz.enumClass(MyEnum, "Name")`, then list it in `.classes` alongside your
+`PyClass` types — each variant becomes a member (`Color.RED == 0`). (A plain
+`enum` used as a function argument or return value converts as an `int`.)
 
 ### Releasing the GIL
 

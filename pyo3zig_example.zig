@@ -497,6 +497,9 @@ fn big_mul(a: i128, b: i128) i128 {
 // argument raises ValueError.
 const Color = enum(i64) { red = 0, green = 1, blue = 2 };
 
+// The same enum exposed as a real Python enum.IntEnum (m.Color.red == 0).
+const ColorEnum = pz.enumClass(Color, "Color");
+
 fn next_color(c: Color) Color {
     return switch (c) {
         .red => .green,
@@ -654,6 +657,34 @@ const Unhashable = extern struct {
 };
 const UnhashableClass = pz.PyClass(Unhashable, .{ .init_args = &.{"v"} });
 
+// Callable instance with keyword arguments + defaults via .call_args.
+const Adder = extern struct {
+    base: i64,
+    pub fn init(base: i64) Adder {
+        return .{ .base = base };
+    }
+    pub fn __call__(self: *Adder, x: i64, step: i64) i64 {
+        return self.base + x * step;
+    }
+};
+const AdderClass = pz.PyClass(Adder, .{
+    .init_args = &.{"base"},
+    .call_args = &.{ "x", "step" },
+    .call_defaults = .{ .step = @as(i64, 1) },
+});
+
+// Awaitable instance: `await Task(n)` resolves immediately to n * 2.
+const Task = extern struct {
+    n: i64,
+    pub fn init(n: i64) Task {
+        return .{ .n = n };
+    }
+    pub fn __await__(self: *Task) i64 {
+        return self.n * 2;
+    }
+};
+const TaskClass = pz.PyClass(Task, .{ .init_args = &.{"n"} });
+
 // bytearray (and bytes/str) decode to a borrowed []const u8.
 fn sum_bytes(data: []const u8) i64 {
     var total: i64 = 0;
@@ -747,7 +778,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("dt_year", dt_year),
         pz.pyFnNamed("next_day", next_day),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass },
 });
 
 comptime {

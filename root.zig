@@ -142,6 +142,7 @@ pub const PyErr_NewException = pycall.PyErr_NewException;
 pub const PyErr_ExceptionMatches = pycall.PyErr_ExceptionMatches;
 
 pub const PyObject_Repr = pycall.PyObject_Repr;
+pub const PyImport_ImportModule = pycall.PyImport_ImportModule;
 pub const PyObject_Type = pycall.PyObject_Type;
 pub const PyObject_IsInstance = pycall.PyObject_IsInstance;
 pub const PyObject_CallFunction = pycall.PyObject_CallFunction;
@@ -162,6 +163,8 @@ pub const PyByteArray_AsString = pycall.PyByteArray_AsString;
 pub const PyByteArray_Size = pycall.PyByteArray_Size;
 pub const HashNotImplemented = pycall.HashNotImplemented;
 pub const PyObject_ClearWeakRefs = pycall.PyObject_ClearWeakRefs;
+pub const pyo3zig_make_ready_awaitable = pycall.pyo3zig_make_ready_awaitable;
+pub const Py_am_await = pytypes.Py_am_await;
 
 pub const PyDateTime_Import = pycall.PyDateTime_Import;
 pub const pyo3zig_PyDateTime_Check = pycall.pyo3zig_PyDateTime_Check;

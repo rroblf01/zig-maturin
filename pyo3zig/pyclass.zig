@@ -317,6 +317,16 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             .{ .args = config.init_args })
     else
         .{};
+    // Optional keyword-argument support for __call__ (same shape as init_args).
+    const has_call_args = @hasField(@TypeOf(config), "call_args");
+    const has_call_defaults = @hasField(@TypeOf(config), "call_defaults");
+    const call_spec = if (has_call_args)
+        (if (has_call_defaults)
+            .{ .args = config.call_args, .defaults = config.call_defaults }
+        else
+            .{ .args = config.call_args })
+    else
+        .{};
     const has_str = @hasDecl(T, "__str__");
     const has_repr = @hasDecl(T, "__repr__");
     const has_hash = @hasDecl(T, "__hash__");
@@ -348,6 +358,8 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_ge = @hasDecl(T, "__ge__");
     const has_richcompare = has_eq or has_lt or has_le or has_gt or has_ge;
     const has_call = @hasDecl(T, "__call__");
+    // Awaitable: __await__(self) returns the value `await obj` resolves to.
+    const has_await = @hasDecl(T, "__await__");
     const has_doc = @hasField(@TypeOf(config), "doc");
     // Numeric conversions and in-place operators.
     const has_int = @hasDecl(T, "__int__");
@@ -1178,23 +1190,28 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
-    // tp_call: makes instances callable. Positional arguments only (kwargs are
-    // ignored); `__call__(self, ...)` is wrapped like a method.
+    // tp_call: makes instances callable. `__call__(self, ...)` is wrapped like a
+    // method — positional only, unless the class declares `.call_args` (and
+    // optional `.call_defaults`), which enables keyword arguments and defaults.
     const CallWrapper = struct {
         const Ctx = struct { self: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject };
-        fn inner(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) ?*zm.PyObject {
+        fn inner(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs_obj: ?*zm.PyObject) ?*zm.PyObject {
             const fn_info = @typeInfo(@TypeOf(T.__call__)).@"fn";
             const method_params = fn_info.params[1..];
             const self_ptr = Cell.ptrFromObj(self_obj);
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const a = arena.allocator();
+            if (comptime has_call_args) {
+                const ca = funcwrap.bindArgs(method_params, call_spec, args_obj, kwargs_obj, a) orelse return null;
+                return funcwrap.callAndConvert(T.__call__, fn_info, .{self_ptr} ++ ca);
+            }
             const expected = @as(isize, @intCast(method_params.len));
-            const actual: isize = if (args_obj) |a| zm.PyTuple_Size(a) else 0;
+            const actual: isize = if (args_obj) |arg| zm.PyTuple_Size(arg) else 0;
             if (actual != expected) {
                 zm.PyErr_SetString(zm.PyExc_TypeError(), "wrong number of arguments");
                 return null;
             }
-            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-            defer arena.deinit();
-            const a = arena.allocator();
             var call_args: funcwrap.paramTypesTupleDirect(method_params) = undefined;
             inline for (method_params, 0..) |param, i| {
                 const arg_obj = zm.PyTuple_GetItem(args_obj, @as(isize, @intCast(i)));
@@ -1207,11 +1224,31 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
         fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
             const c = @as(*Ctx, @ptrCast(@alignCast(p)));
-            return inner(c.self, c.args);
+            return inner(c.self, c.args, c.kwargs);
         }
         fn call(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
             var ctx = Ctx{ .self = self_obj, .args = args_obj, .kwargs = kwargs_obj };
             return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+
+    // am_await: `await obj` calls __await__(self), whose return value (any
+    // convertible type) becomes the resolved result via a one-shot awaitable
+    // iterator. This is "ready" async — it resolves immediately, with no
+    // suspension; useful for objects that are awaitable for API symmetry.
+    const AwaitWrapper = struct {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const fi = @typeInfo(@TypeOf(T.__await__)).@"fn";
+            const val = callFuncReturningPyObject(T.__await__, fi, .{ptr}) orelse return null;
+            defer zm.Py_XDECREF(val);
+            return zm.pyo3zig_make_ready_awaitable(val);
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn awaitFn(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
         }
     };
 
@@ -1432,6 +1469,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_next) slot_count += 1;
             if (has_iter) slot_count += 1;
             if (has_call) slot_count += 1;
+            if (has_await) slot_count += 1;
             if (has_doc) slot_count += 1;
             if (has_add) slot_count += 1;
             if (has_sub) slot_count += 1;
@@ -1538,6 +1576,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
             if (has_call) {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_call, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&CallWrapper.call))) };
+                slot_idx += 1;
+            }
+            if (has_await) {
+                slots[slot_idx] = .{ .slot = zm.Py_am_await, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&AwaitWrapper.awaitFn))) };
                 slot_idx += 1;
             }
             if (has_doc) {
@@ -1738,6 +1780,52 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
         pub fn class_name() [*:0]const u8 {
             return type_name;
+        }
+    };
+}
+
+/// Expose a Zig `enum` as a real Python `enum.IntEnum` subclass. Register the
+/// returned type in the module's `.classes` list just like a `PyClass`; each
+/// enum variant becomes a member (`Color.RED`, `Color.RED == 0`, ...).
+///
+///     const Color = enum(i64) { RED = 0, GREEN = 1, BLUE = 2 };
+///     const ColorEnum = pz.enumClass(Color, "Color");
+pub fn enumClass(comptime E: type, comptime name: [:0]const u8) type {
+    const info = @typeInfo(E).@"enum";
+    return struct {
+        pub fn py_type_obj() ?*zm.PyObject {
+            const enum_mod = zm.PyImport_ImportModule("enum") orelse return null;
+            defer zm.Py_XDECREF(enum_mod);
+            const int_enum = zm.PyObject_GetAttrString(enum_mod, "IntEnum") orelse return null;
+            defer zm.Py_XDECREF(int_enum);
+
+            const members = zm.PyDict_New() orelse return null;
+            inline for (info.fields) |f| {
+                const v = zm.PyLong_FromLongLong(@as(i64, @intCast(f.value)));
+                if (v == null) {
+                    zm.Py_XDECREF(members);
+                    return null;
+                }
+                defer zm.Py_XDECREF(v);
+                // EnumField.name is a 0-terminated string; reuse it as the key.
+                _ = zm.PyDict_SetItemString(members, @as([*:0]const u8, @ptrCast(f.name.ptr)), v);
+            }
+
+            // IntEnum("Name", {members}) via the functional API.
+            const name_obj = zm.PyUnicode_FromString(@as([*:0]const u8, @ptrCast(name.ptr)));
+            const args = zm.PyTuple_New(2) orelse {
+                zm.Py_XDECREF(members);
+                zm.Py_XDECREF(name_obj);
+                return null;
+            };
+            _ = zm.PyTuple_SetItem(args, 0, name_obj); // steals
+            _ = zm.PyTuple_SetItem(args, 1, members); // steals
+            const result = zm.PyObject_CallObject(int_enum, args);
+            zm.Py_XDECREF(args);
+            return result;
+        }
+        pub fn class_name() [*:0]const u8 {
+            return @as([*:0]const u8, @ptrCast(name.ptr));
         }
     };
 }
