@@ -33,12 +33,40 @@ changes to either wait for a 2.0.
   argument coerces, matching Python's own `complex()`).
 - **`zig-maturin build --abi3 <X.Y>`** CLI flag: build a stable-ABI wheel without
   editing `pyproject.toml`.
+- **Custom exception types** (`pz.exceptionClass("mod.MyError", base)`): register
+  a Python exception subclass in a module's `.classes` and raise it from Zig
+  (`MyError.raise("msg")`). `base` is a builtin exception getter (e.g.
+  `pz.PyExc_ValueError`) or `null` for `Exception`.
+- **Variadic functions** (`pz.pyFnRaw("name", fn)`): a function taking
+  `(args: ?*PyObject, kwargs: ?*PyObject)` receives the raw argument tuple and
+  keyword dict for `*args` / `**kwargs` handling.
+- **Computed properties** documented: `.properties = &.{ .{ .name, .get, .set } }`
+  exposes getter/setter attributes via `PyGetSetDef` (`set` optional → read-only).
+- **`os.PathLike` arguments**: a `pathlib.Path` (anything implementing
+  `__fspath__`) is accepted wherever a `[]const u8` string is expected, coerced
+  via `os.fspath` and copied into the call arena.
+- **Mixed Python/Zig package layout**: when `<python-source>/<module>/` is a
+  package, the wheel ships its pure-Python files and nests the compiled extension
+  inside it (`module/module.so`, re-exported from `__init__.py`).
+- **PEP 660 editable installs**: `pip install -e .` works via a `build_editable`
+  hook (debug build; re-install to recompile after Zig changes).
+- **`zig-maturin generate-ci`**: writes a GitHub Actions workflow that builds
+  wheels across Linux/macOS/Windows × CPython versions and publishes to PyPI on a
+  tag (Trusted Publishing). Toolchain-free (uses the `ziglang` wheel).
 
 ### Not yet
 - **`set` / `frozenset` and `dict`↔`HashMap` typed conversion**: Python sets and
   dicts already cross the boundary as a raw `*pz.PyObject` (full manual control);
   a typed mapping awaits dedicated wrapper types like the existing `PyList` /
   `PyDict` and is deferred to keep the comptime converter unambiguous.
+- **Zig-class inheritance from another Zig class**: a Python subclass of a Zig
+  class works, but a Zig `PyClass` cannot yet set another `PyClass` as its base —
+  it needs the instance field layout (the `PyCell` offset model) reworked so the
+  derived fields sit after the base's. (Custom exception classes and Python-side
+  subclassing cover the common cases.)
+- **Sub-interpreters**: modules use single-phase init with global state
+  (`m_size = -1`); per-interpreter state via multi-phase init (PEP 489) is future
+  work.
 
 ## [0.3.0] - 2026-06-10
 

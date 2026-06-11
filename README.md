@@ -64,8 +64,24 @@ no system toolchain:
 
 ```bash
 pip install .                       # builds + installs the extension
+pip install -e .                    # editable (PEP 660); re-run to recompile
 python -m build                     # wheel + sdist in dist/
 ```
+
+### Mixed Python/Zig packages
+
+Ship pure-Python code alongside the native module: put a package at
+`<python-source>/<module-name>/` (e.g. `src/my_extension/__init__.py`). The wheel
+then bundles those `.py` files and nests the compiled extension inside the
+package as `my_extension/my_extension.<so>`, which `__init__.py` re-exports:
+
+```python
+# src/my_extension/__init__.py
+from .my_extension import *      # the Zig extension
+from .helpers import wrapper     # pure-Python companion code
+```
+
+Without such a package, the extension is installed as a top-level `module.so`.
 
 ### One wheel for all CPython versions (abi3)
 
@@ -151,7 +167,7 @@ Zig error surface as a Python exception.
 | `bool` | `bool` | `bool` |
 | `enum` | `int` (validated; bad value → `ValueError`) | `int` |
 | `pz.DateTime` | `datetime.datetime` | `datetime.datetime` |
-| `[]const u8` | `str` / `bytes` / `bytearray` (borrowed) | `str` |
+| `[]const u8` | `str` / `bytes` / `bytearray` / `os.PathLike` (borrowed) | `str` |
 | `?T` | `T` or `None` | `T` or `None` |
 | `[]T`, `[N]T` | `list` / `tuple` | `list` |
 | tuple struct | `list` / `tuple` | `tuple` |
@@ -326,7 +342,52 @@ fn parse_positive(x: i64) !i64 {
 }
 ```
 
-`pz.newException("mymod.MyError", null)` creates a custom exception type.
+For a reusable custom exception, declare a `pz.exceptionClass`, register it in
+`.classes`, and raise it from Zig:
+
+```zig
+const MyError = pz.exceptionClass("mymod.MyError", pz.PyExc_ValueError);
+// .classes = &.{ ..., MyError }
+
+fn check(n: i64) !i64 {
+    if (n < 0) { MyError.raise("must be non-negative"); return error.Bad; }
+    return n;
+}
+```
+
+`MyError` becomes `mymod.MyError` (a `ValueError` subclass) on the Python side.
+Pass `null` as the base for a plain `Exception`. (`pz.newException(...)` remains
+for one-off types not registered as a class.)
+
+### Computed properties
+
+Expose getter/setter attributes (not backed by a struct field) with
+`.properties`:
+
+```zig
+const Vec2Class = pz.PyClass(Vec2, .{
+    .properties = &.{
+        .{ .name = "length_sq", .get = vec2_length_sq },        // read-only
+        .{ .name = "x", .get = vec2_get_x, .set = vec2_set_x },  // read-write
+    },
+});
+```
+
+### Variadic functions (`*args` / `**kwargs`)
+
+`pz.pyFnRaw` registers a function that receives the raw argument tuple and
+keyword dict:
+
+```zig
+fn sum_all(args: ?*pz.PyObject, kwargs: ?*pz.PyObject) i64 {
+    var total: i64 = 0;
+    var i: isize = 0;
+    while (i < pz.PyTuple_Size(args)) : (i += 1)
+        total += pz.PyLong_AsLongLong(pz.PyTuple_GetItem(args, i));
+    return total;
+}
+// pz.pyFnRaw("sum_all", sum_all)
+```
 
 ### Module constants
 
@@ -402,6 +463,7 @@ methods) so type checkers see your classes too.
 | `zig-maturin develop` | Build and install into the current environment. |
 | `zig-maturin build` | Build a wheel in `dist/`. |
 | `zig-maturin sdist` | Build a source distribution. |
+| `zig-maturin generate-ci` | Write a GitHub Actions workflow that builds + publishes wheels. |
 
 `build` / `develop` options: `--target <triple>` (repeatable), `--release`,
 `--out <dir>`, `--abi3 <X.Y>` (build a stable-ABI wheel), and for
