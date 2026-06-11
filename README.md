@@ -38,8 +38,13 @@ Numbers vary by machine; run `python examples/bench.py` after building the demo.
 
 ```bash
 pip install zig-maturin     # the build tool (pure Python)
-# you also need Zig 0.14+ on PATH (https://ziglang.org/download/)
 ```
+
+No system toolchain is required: if `zig` is not on PATH, the build pulls in the
+[`ziglang`](https://pypi.org/project/ziglang/) wheel (a pinned Zig binary)
+automatically and compiles through it. If you already have
+[Zig 0.16](https://ziglang.org/download/) on PATH, that is used instead (no
+download).
 
 ## Quick start
 
@@ -53,7 +58,9 @@ zig-maturin build                   # produce a wheel in dist/
 
 Scaffolded projects use the **PEP 517 backend**
 (`build-backend = "zig_maturin.buildapi"`), so the standard tools work too —
-`pip install .`, `pip wheel .`, `python -m build` — with Zig on PATH:
+`pip install .`, `pip wheel .`, `python -m build`. If no `zig` is on PATH the
+backend adds `ziglang` as a build dependency automatically, so this works with
+no system toolchain:
 
 ```bash
 pip install .                       # builds + installs the extension
@@ -81,6 +88,21 @@ The framework already uses out-of-line refcounting and accessor functions (not
 inline macros), so abi3 adds ~no runtime overhead here. Managed `__dict__` and
 weakref need the GC pre-header and are unavailable under abi3 (cyclic GC of
 `?*pz.PyObject` fields still works).
+
+### Free-threading (no-GIL, PEP 703)
+
+Extensions declare themselves `Py_MOD_GIL_NOT_USED`, so on a free-threaded
+interpreter (`python3.13t` / `python3.14t`) they run without forcing the GIL
+back on. Building on a free-threaded interpreter tags the wheel `cp3Xt`
+automatically — nothing to configure. The shim uses out-of-line refcounting and
+per-thread state, and its process-lifetime caches are published with atomic
+compare-exchange / `PyMutex`, so it is free-threading clean.
+
+## Stability
+
+`1.0.0` is the first stable release. The public Zig API (`pyo3zig`, imported as
+`pz`) and the `zig_maturin` build tooling follow semantic versioning: breaking
+changes wait for a major bump.
 
 ## Writing an extension
 
@@ -125,6 +147,7 @@ Zig error surface as a Python exception.
 |---|---|---|
 | `i8`..`i64`, `u8`..`u64` | `int` | `int` |
 | `f32`, `f64` | `float` | `float` |
+| `std.math.Complex(f64/f32)` | `complex` (int/float coerced) | `complex` |
 | `bool` | `bool` | `bool` |
 | `enum` | `int` (validated; bad value → `ValueError`) | `int` |
 | `pz.DateTime` | `datetime.datetime` | `datetime.datetime` |
@@ -315,6 +338,30 @@ const Mod = pz.pyModule("my_extension", .{
 });
 ```
 
+### Submodules
+
+Nest modules with `.submodules`. Each child is set as an attribute of the parent
+and registered in `sys.modules` under its dotted name, so both attribute access
+and `import parent.child` work:
+
+```zig
+const MathxMod = pz.pyModule("mathx", .{
+    .constants = .{ .E = @as(f64, 2.71828) },
+    .functions = &.{ pz.pyFnNamed("triple", triple) },
+});
+
+const Mod = pz.pyModule("my_extension", .{
+    .submodules = .{ MathxMod },
+    .functions  = &.{ ... },
+});
+```
+
+```python
+import my_extension
+my_extension.mathx.triple(4)        # attribute access
+from my_extension.mathx import triple   # dotted import
+```
+
 ### Error handling and panics
 
 - A Zig **error** (`!T`) becomes a Python exception (mapped by kind: `error.Overflow`
@@ -397,8 +444,8 @@ zig-source  = "src/main.zig"
 
 ## Requirements
 
-- Python 3.12+
-- Zig 0.14+ (tested with 0.16.0)
+- Python 3.12+ (including free-threaded `3.13t` / `3.14t`)
+- Zig 0.16 — on PATH, or pulled in automatically as the `ziglang` wheel
 - Linux, macOS, or Windows
 
 ## License

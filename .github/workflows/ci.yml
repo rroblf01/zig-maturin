@@ -192,6 +192,57 @@ jobs:
       - name: Smoke test imported extension
         run: python ci/smoke.py
 
+  # Free-threading (no-GIL, PEP 703): build + import the extension on a
+  # free-threaded interpreter. Proves the module's Py_MOD_GIL_NOT_USED opt-in
+  # works and the extension loads without re-enabling the GIL.
+  free-threaded:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13t", "3.14t"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Install zig-maturin
+        run: pip install .
+      - name: Build extension wheel
+        run: zig-maturin build --out dist
+      - name: Verify wheel is tagged free-threaded (cp3Xt)
+        run: ls dist/*-cp3??t-*.whl
+      - name: Install built wheel
+        run: pip install --find-links dist --no-index pyo3zig_demo
+      - name: Smoke test on a free-threaded interpreter
+        run: |
+          python -c "import sys; assert not sys._is_gil_enabled(), 'GIL still enabled'"
+          python ci/smoke.py
+
+  # Toolchain-free build: no `zig` on PATH (the runner has none and we add no
+  # setup-zig step). The CLI must fall back to the `ziglang` wheel and still
+  # produce a working extension — the path a bare `pip install .` takes.
+  toolchain-free-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install zig-maturin + ziglang (no system Zig)
+        run: pip install . "ziglang>=0.16.0,<0.17.0"
+      - name: Assert no system zig
+        run: 'which zig && exit 1 || echo "no system zig, as expected"'
+      - name: Build via the ziglang fallback
+        run: zig-maturin build --out dist
+      - name: Install + smoke test
+        run: |
+          pip install --find-links dist --no-index pyo3zig_demo
+          python ci/smoke.py
+
   # Windows/ARM64 wheel, cross-compiled from a Linux x86_64 runner: zig.exe
   # segfaults when run natively on a Windows/ARM host, and an x86_64 host
   # cannot run the resulting ARM64 .pyd, so this is build-only (no import).
