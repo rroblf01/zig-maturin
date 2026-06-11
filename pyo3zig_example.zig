@@ -699,8 +699,45 @@ const ARange = extern struct {
         self.cur += 1;
         return v;
     }
+    // operator.length_hint(ARange(n)) -> remaining items.
+    pub fn __length_hint__(self: *ARange) i64 {
+        return self.stop - self.cur;
+    }
 };
 const ARangeClass = pz.PyClass(ARange, .{ .init_args = &.{"stop"} });
+
+// os.PathLike: os.fspath(FilePath(id)) -> "/tmp/file<id>".
+const FilePath = extern struct {
+    id: i64,
+    pub fn init(id: i64) FilePath {
+        return .{ .id = id };
+    }
+    pub fn __fspath__(self: *FilePath) !pz.PyString {
+        var buf: [32]u8 = undefined;
+        const s = try std.fmt.bufPrint(&buf, "/tmp/file{d}", .{self.id});
+        return pz.PyString.init(s);
+    }
+};
+const FilePathClass = pz.PyClass(FilePath, .{ .init_args = &.{"id"} });
+
+// Descriptor protocol: a doubling data descriptor. __get__ returns the stored
+// value; __set__ stores twice the assigned value on the owner instance.
+const Doubler = extern struct {
+    value: i64,
+    pub fn init() Doubler {
+        return .{ .value = 0 };
+    }
+    pub fn __get__(self: *Doubler, obj: ?*pz.PyObject, objtype: ?*pz.PyObject) i64 {
+        _ = obj;
+        _ = objtype;
+        return self.value;
+    }
+    pub fn __set__(self: *Doubler, obj: ?*pz.PyObject, value: i64) void {
+        _ = obj;
+        self.value = value * 2;
+    }
+};
+const DoublerClass = pz.PyClass(Doubler, .{});
 
 // bytearray (and bytes/str) decode to a borrowed []const u8.
 fn sum_bytes(data: []const u8) i64 {
@@ -795,7 +832,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("dt_year", dt_year),
         pz.pyFnNamed("next_day", next_day),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass },
 });
 
 comptime {

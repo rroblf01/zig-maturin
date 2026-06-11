@@ -405,6 +405,13 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     // Dynamic attribute access (fall back to generic lookup).
     const has_getattr = @hasDecl(T, "__getattr__");
     const has_setattr = @hasDecl(T, "__setattr__");
+    // Descriptor protocol: a class usable as a managed attribute on another
+    // class. __get__(self, obj, objtype); __set__(self, obj, value);
+    // __delete__(self, obj). __set__/__delete__ share the tp_descr_set slot.
+    const has_descr_get = @hasDecl(T, "__get__");
+    const has_descr_set = @hasDecl(T, "__set__");
+    const has_descr_delete = @hasDecl(T, "__delete__");
+    const has_descr_assign = has_descr_set or has_descr_delete;
     // Plain methods auto-registered when present (context manager, pickle, copy,
     // formatting, ...). __enter__ is special-cased (void return -> self); the
     // rest are detected directly in the auto_methods loop via @hasDecl.
@@ -1303,6 +1310,88 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
+    // __class_getitem__: make the class subscriptable in type hints
+    // (MyClass[int] -> types.GenericAlias). Registered on every class.
+    const ClassGetItemWrapper = struct {
+        fn classgetitem(cls: ?*zm.PyObject, item: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pyo3zig_GenericAlias(cls, item);
+        }
+    };
+
+    // tp_descr_get: __get__(self, obj, objtype). obj is null when the descriptor
+    // is accessed on the class itself.
+    const DescrGetWrapper = struct {
+        const Ctx = struct { self: ?*zm.PyObject, obj: ?*zm.PyObject, objtype: ?*zm.PyObject };
+        fn inner(self_obj: ?*zm.PyObject, obj: ?*zm.PyObject, objtype: ?*zm.PyObject) ?*zm.PyObject {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const fi = @typeInfo(@TypeOf(T.__get__)).@"fn";
+            return callFuncReturningPyObject(T.__get__, fi, .{ ptr, obj, objtype });
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.obj, c.objtype);
+        }
+        fn descrGet(self_obj: ?*zm.PyObject, obj: ?*zm.PyObject, objtype: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .self = self_obj, .obj = obj, .objtype = objtype };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+
+    // tp_descr_set: __set__(self, obj, value); a null value means delete, which
+    // routes to __delete__ when present.
+    const DescrSetWrapper = struct {
+        const Ctx = struct { self: ?*zm.PyObject, obj: ?*zm.PyObject, value: ?*zm.PyObject };
+        fn inner(self_obj: ?*zm.PyObject, obj: ?*zm.PyObject, value: ?*zm.PyObject) c_int {
+            const ptr = Cell.ptrFromObj(self_obj);
+            if (value == null) {
+                if (comptime has_descr_delete) {
+                    const di = @typeInfo(@TypeOf(T.__delete__)).@"fn";
+                    if (@typeInfo(di.return_type orelse void) == .error_union) {
+                        T.__delete__(ptr, obj) catch |e| {
+                            errors.setPyExceptionIfNeeded(e);
+                            return -1;
+                        };
+                    } else {
+                        T.__delete__(ptr, obj);
+                    }
+                    return 0;
+                }
+                zm.PyErr_SetString(zm.PyExc_AttributeError(), "can't delete attribute");
+                return -1;
+            }
+            if (comptime !has_descr_set) {
+                zm.PyErr_SetString(zm.PyExc_AttributeError(), "can't set attribute");
+                return -1;
+            }
+            const si = @typeInfo(@TypeOf(T.__set__)).@"fn";
+            // params: self, obj (owner, raw PyObject), value (converted).
+            const ValT = si.params[2].type.?;
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const conv = conversion.fromPyObject(ValT, value, arena.allocator()) catch |err| {
+                funcwrap.setConversionError(err);
+                return -1;
+            };
+            if (@typeInfo(si.return_type orelse void) == .error_union) {
+                T.__set__(ptr, obj, conv) catch |e| {
+                    errors.setPyExceptionIfNeeded(e);
+                    return -1;
+                };
+            } else {
+                T.__set__(ptr, obj, conv);
+            }
+            return 0;
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) c_int {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.obj, c.value);
+        }
+        fn descrSet(self_obj: ?*zm.PyObject, obj: ?*zm.PyObject, value: ?*zm.PyObject) callconv(.c) c_int {
+            var ctx = Ctx{ .self = self_obj, .obj = obj, .value = value };
+            return zm.pz_guard_int(&thunk, &ctx);
+        }
+    };
+
     // GC support for classes holding PyObject fields: visit fields in traverse,
     // clear them in clear (breaks reference cycles).
     const GcWrapper = struct {
@@ -1461,9 +1550,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 // method converts a returned struct to a dict, not an instance —
                 // so __copy__/__deepcopy__ would misbehave and are omitted.)
                 const plain_dunders = .{
-                    "__exit__",   "__reduce__", "__reversed__",  "__format__",
-                    "__bytes__",  "__trunc__",  "__floor__",     "__ceil__",
-                    "__round__",  "__getstate__", "__setstate__",
+                    "__exit__",      "__reduce__",      "__reversed__", "__format__",
+                    "__bytes__",     "__trunc__",       "__floor__",    "__ceil__",
+                    "__round__",     "__getstate__",    "__setstate__", "__fspath__",
+                    "__length_hint__",
                 };
                 for (plain_dunders) |dn| {
                     if (@hasDecl(T, dn)) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, dn, @field(T, dn))};
@@ -1478,6 +1568,13 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     .ml_name = @as(?[*:0]const u8, "__deepcopy__"),
                     .ml_meth = &DeepCopyWrapper.meth,
                     .ml_flags = zm.METH_VARARGS,
+                    .ml_doc = null,
+                }};
+                // Subscriptable for type hints (MyClass[int]); every class.
+                arr = arr ++ &[_]zm.PyMethodDef{.{
+                    .ml_name = @as(?[*:0]const u8, "__class_getitem__"),
+                    .ml_meth = @ptrCast(&ClassGetItemWrapper.classgetitem),
+                    .ml_flags = zm.METH_O | METH_CLASS,
                     .ml_doc = null,
                 }};
                 break :blk arr;
@@ -1561,6 +1658,8 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_irshift) slot_count += 1;
             if (has_getattr) slot_count += 1;
             if (has_setattr) slot_count += 1;
+            if (has_descr_get) slot_count += 1;
+            if (has_descr_assign) slot_count += 1;
             if (has_buffer) slot_count += 1;
             if (is_gc) slot_count += 2; // tp_traverse + tp_clear
 
@@ -1794,6 +1893,14 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
             if (has_setattr) {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_setattro, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&SetAttrWrapper.setattro))) };
+                slot_idx += 1;
+            }
+            if (has_descr_get) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_descr_get, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DescrGetWrapper.descrGet))) };
+                slot_idx += 1;
+            }
+            if (has_descr_assign) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_descr_set, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DescrSetWrapper.descrSet))) };
                 slot_idx += 1;
             }
             if (has_buffer) {

@@ -166,6 +166,8 @@ pub fn classStub(comptime spec: anytype) []const u8 {
         .{ "__divmod__", &[_][]const u8{"other"} },
         .{ "__getstate__", &[_][]const u8{} },
         .{ "__setstate__", &[_][]const u8{"state"} },
+        .{ "__fspath__", &[_][]const u8{} },
+        .{ "__length_hint__", &[_][]const u8{} },
     };
     inline for (dunders) |d| {
         if (@hasDecl(T, d[0])) {

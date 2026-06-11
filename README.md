@@ -165,9 +165,9 @@ Register the class in the module's `.classes` field.
   `__aiter__`/`__anext__` (`async for x in obj`; `__anext__(self) -> ?T`),
   `__enter__`/`__exit__` (context manager, `with obj:`), `__reduce__`
   (pickle), `__getstate__`/`__setstate__`, `__bytes__` (`bytes(obj)`),
-  `__floor__`/`__ceil__`/`__trunc__` (`math.*`), `__round__`, and
+  `__floor__`/`__ceil__`/`__trunc__` (`math.*`), `__round__`,
   `__copy__`/`__deepcopy__` (`copy.copy`/`copy.deepcopy`, returning a fresh
-  instance).
+  instance), `__fspath__` (`os.PathLike`), `__length_hint__`.
 - Comparisons: `__eq__` (and `__ne__` derived from it), plus `__lt__`, `__le__`,
   `__gt__`, `__ge__` — define any subset (just `__lt__` enables `sorted()`).
   Defining `__eq__` without `__hash__` makes instances unhashable, as in Python.
@@ -187,8 +187,13 @@ Register the class in the module's `.classes` field.
   into a new instance.
 - Attributes: `__getattr__(self, name)` (consulted only when normal lookup
   fails) and `__setattr__(self, name, value)` (intercepts every assignment).
+- Descriptors: `__get__(self, obj, objtype)`, `__set__(self, obj, value)`,
+  `__delete__(self, obj)` — use an instance as a managed attribute on a class.
 - Buffer: `__buffer__(self)` returns a `[]const u8` exposed zero-copy to
   `memoryview`/`bytes`/numpy (read-only).
+
+Every class is also subscriptable for type hints — `MyClass[int]` yields a
+`types.GenericAlias` (auto `__class_getitem__`).
 
 **Cyclic GC:** a class storing a `?*pz.PyObject` field automatically gets
 `Py_TPFLAGS_HAVE_GC` with `tp_traverse`/`tp_clear`, so reference cycles are

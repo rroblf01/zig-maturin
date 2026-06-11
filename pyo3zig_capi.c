@@ -74,6 +74,12 @@ PyObject* pyo3zig_make_ready_awaitable(PyObject* value) { return pzra_new(value,
 /* Awaitable that raises StopAsyncIteration (ends an `async for`). */
 PyObject* pyo3zig_make_stop_async_awaitable(void) { return pzra_new(NULL, 1); }
 
+/* __class_getitem__: build a types.GenericAlias so classes are subscriptable in
+ * type hints (e.g. Stack[int]). origin is the class, item the subscript. */
+PyObject* pyo3zig_GenericAlias(PyObject* origin, PyObject* item) {
+    return Py_GenericAlias(origin, item);
+}
+
 /* --- Panic safety net -----------------------------------------------------
  * Zig has no stack unwinding, so a panic would normally abort the whole
  * interpreter. pz_guard() runs the extension body inside a setjmp frame; the

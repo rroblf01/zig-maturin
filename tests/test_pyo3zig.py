@@ -6,7 +6,10 @@ import datetime
 import enum
 import gc
 import math
+import operator
+import os
 import sys
+import types
 import weakref
 
 sys.path.insert(0, ".")
@@ -649,6 +652,31 @@ async def _acomp():
 
 
 check("async comprehension", asyncio.run(_acomp()) == [0, 1, 4, 9])
+
+# test_class_getitem
+_ga = m.Vec2[int]
+check("class_getitem -> GenericAlias", isinstance(_ga, types.GenericAlias))
+check("GenericAlias origin", _ga.__origin__ is m.Vec2)
+check("GenericAlias args", _ga.__args__ == (int,))
+check("class_getitem multi-arg", m.Range[int, str].__args__ == (int, str))
+check("class_getitem on plain class", m.Bag[int].__origin__ is m.Bag)
+
+# test_fspath_and_length_hint
+check("os.fspath", os.fspath(m.FilePath(7)) == "/tmp/file7")
+check("operator.length_hint", operator.length_hint(m.ARange(5)) == 5)
+
+# test_descriptor
+class _Holder:
+    temp = m.Doubler()
+
+
+_h = _Holder()
+check("descriptor initial __get__", _h.temp == 0)
+_h.temp = 21
+check("descriptor __set__ doubles", _h.temp == 42)
+_h.temp = 5
+check("descriptor __set__ again", _h.temp == 10)
+check("descriptor on class", _Holder.temp == 10)
 
 total = passed + failed
 print(

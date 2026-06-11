@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **Descriptor protocol** (`__get__` / `__set__` / `__delete__`): a class can be
+  a managed attribute on another class (`tp_descr_get` / `tp_descr_set`); the
+  assigned value in `__set__` is converted to its declared Zig type.
+- **`os.PathLike` (`__fspath__`)** and **`__length_hint__`**: auto-registered
+  name-lookup hooks, so instances work with `os.fspath`/`open()` and
+  `operator.length_hint`.
+- **Subscriptable classes for type hints**: every class gets
+  `__class_getitem__`, so `MyClass[int]` returns a `types.GenericAlias`
+  (`Stack[int]` in annotations).
 - **Awaitable instances (`__await__`)**: `await obj` resolves to whatever
   `__await__(self)` returns, via a shipped one-shot awaitable-iterator type.
   Works with `asyncio.run`. (Ready/immediate resolution — no suspension.)
