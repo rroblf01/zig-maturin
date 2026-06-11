@@ -71,6 +71,12 @@ version:
 abi3 = "3.12"
 ```
 
+Or, without touching `pyproject.toml`, pass it on the command line:
+
+```bash
+zig-maturin build --abi3 3.12
+```
+
 The framework already uses out-of-line refcounting and accessor functions (not
 inline macros), so abi3 adds ~no runtime overhead here. Managed `__dict__` and
 weakref need the GC pre-header and are unavailable under abi3 (cyclic GC of
@@ -351,8 +357,8 @@ methods) so type checkers see your classes too.
 | `zig-maturin sdist` | Build a source distribution. |
 
 `build` / `develop` options: `--target <triple>` (repeatable), `--release`,
-`--out <dir>`, and for cross-compilation `--python-include` / `--python-libdir`
-/ `--python-lib`.
+`--out <dir>`, `--abi3 <X.Y>` (build a stable-ABI wheel), and for
+cross-compilation `--python-include` / `--python-libdir` / `--python-lib`.
 
 ## Cross-compilation
 

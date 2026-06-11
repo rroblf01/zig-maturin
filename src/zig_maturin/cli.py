@@ -52,7 +52,13 @@ def scaffold(project_name, path):
     default=None,
     help="Target Python import library name, e.g. python312 (Windows cross)",
 )
-def build(target, release, out, python_include, python_libdir, python_lib):
+@click.option(
+    "--abi3",
+    default=None,
+    help="Build a stable-ABI wheel for this CPython minimum, e.g. 3.12. "
+    "Overrides [tool.zig-maturin] abi3.",
+)
+def build(target, release, out, python_include, python_libdir, python_lib, abi3):
     """Build the Zig extension and package it into a wheel."""
     config = read_config()
     if python_include:
@@ -61,6 +67,8 @@ def build(target, release, out, python_include, python_libdir, python_lib):
         config.python_libdir = python_libdir
     if python_lib:
         config.python_lib = python_lib
+    if abi3:
+        config.abi3 = abi3
     build_project(config, target, release, out)
 
 

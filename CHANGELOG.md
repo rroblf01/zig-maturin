@@ -12,7 +12,8 @@ All notable changes to this project are documented here. The format is based on
   `python -m build` work without invoking the CLI (Zig must be on PATH).
   Implements `build_wheel`, `build_sdist`, and `prepare_metadata_for_build_wheel`.
 - **abi3 / stable ABI (opt-in)**: set `[tool.zig-maturin] abi3 = "3.12"` (or
-  `--config-setting abi3=3.12`) to build one `cp312-abi3-<platform>` wheel that
+  `zig-maturin build --abi3 3.12`, or `--config-setting abi3=3.12`) to build one
+  `cp312-abi3-<platform>` wheel that
   works on that CPython and every later version. The C shim compiles against the
   Limited API; the one-shot awaitable type is built via `PyType_FromSpec` and
   datetime goes through the `datetime` module, so both stay stable-ABI. Because

@@ -142,6 +142,56 @@ jobs:
           name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
           path: dist/*.whl
 
+  # The abi3 promise: one stable-ABI wheel built against a single CPython works
+  # unmodified on that version AND every later one. Build a `cp312-abi3` wheel
+  # once on 3.12, then install + import it on 3.12, 3.13 and 3.14. This is the
+  # forward-compat proof that can't be made on a single local interpreter.
+  abi3-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Install zig-maturin
+        run: pip install .
+      - name: Build abi3 wheel (cp312-abi3)
+        run: zig-maturin build --abi3 3.12 --out dist
+      - name: Verify wheel is tagged cp312-abi3
+        run: |
+          ls dist/
+          ls dist/*-cp312-abi3-*.whl
+      - uses: actions/upload-artifact@v7
+        with:
+          name: abi3-wheel
+          path: dist/*.whl
+
+  abi3-forward-compat:
+    needs: abi3-build
+    strategy:
+      fail-fast: false
+      matrix:
+        # The one cp312-abi3 wheel must import on its build version and every
+        # later CPython without a rebuild.
+        python-version: ["3.12", "3.13", "3.14"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: abi3-wheel
+          path: dist
+      - name: Install the cp312-abi3 wheel
+        run: pip install --find-links dist --no-index pyo3zig_demo
+      - name: Smoke test imported extension
+        run: python ci/smoke.py
+
   # Windows/ARM64 wheel, cross-compiled from a Linux x86_64 runner: zig.exe
   # segfaults when run natively on a Windows/ARM host, and an x86_64 host
   # cannot run the resulting ARM64 .pyd, so this is build-only (no import).

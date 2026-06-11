@@ -31,6 +31,17 @@ def test_cli_version():
     assert "zig-maturin" in result.stdout
 
 
+def test_cli_build_exposes_abi3_flag():
+    result = subprocess.run(
+        [*ZIG_MATURIN, "build", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "--abi3" in result.stdout
+    assert "stable-ABI" in result.stdout
+
+
 def test_scaffold_creates_project():
     with tempfile.TemporaryDirectory() as tmp:
         result = subprocess.run(
