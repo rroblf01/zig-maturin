@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **Suspending coroutines (`__await_delegate__`)**: a class can return a real
+  Python awaitable (Future/coroutine) to delegate to, so `await obj` genuinely
+  suspends to the running event loop (verified: delegated awaitables interleave
+  under `asyncio.gather`, resolve via `loop.create_future()`).
 - **Arbitrary attributes on GC classes (managed `__dict__`)**: a class with a
   `?*pz.PyObject` field now also carries a managed `__dict__`, so instances
   accept any Python attribute (`node.label = ...`), expose `__dict__`/`vars()`,
@@ -117,9 +121,6 @@ All notable changes to this project are documented here. The format is based on
   `tp_weaklistoffset`/`tp_dictoffset` field plus a subclass-safe custom dealloc
   (a `subtype_dealloc` equivalent) — out of scope. Add a `?*pz.PyObject` field to
   make the class GC and get both. (weakref/`__dict__` work on GC classes today.)
-- **Suspending coroutines**: awaitables resolve immediately (`__await__` /
-  `__anext__` are *ready*); true suspension would need a coroutine driver that
-  yields to the event loop.
 - **Inheriting from a `pz.enumClass`** as a Zig `PyClass` base (the IntEnum is a
   standalone Python type, not a Zig-backed class).
 - **Subclassing classes that need a custom destructor** (`__deinit__` or GC

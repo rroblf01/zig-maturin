@@ -97,6 +97,8 @@ pub fn PyDateTime_Import() c_int {
 pub extern fn pyo3zig_make_ready_awaitable(?*PyObject) callconv(.c) ?*PyObject;
 // Awaitable that raises StopAsyncIteration (terminates an `async for`).
 pub extern fn pyo3zig_make_stop_async_awaitable() callconv(.c) ?*PyObject;
+// Await-iterator of an arbitrary awaitable (for __await_delegate__ suspension).
+pub extern fn pyo3zig_get_await_iter(?*PyObject) callconv(.c) ?*PyObject;
 // types.GenericAlias for __class_getitem__ (MyClass[int] in type hints).
 pub extern fn pyo3zig_GenericAlias(?*PyObject, ?*PyObject) callconv(.c) ?*PyObject;
 // Managed __dict__ traverse/clear (for GC classes with arbitrary attributes).

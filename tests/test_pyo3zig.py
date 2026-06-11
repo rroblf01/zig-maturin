@@ -743,6 +743,44 @@ for _i in range(500):
 gc.collect()
 check("managed dict stress (no leak)", True)
 
+# test_await_delegate (real suspension)
+async def _deleg_sleep():
+    a = m.Awaiter()
+    a.fut = asyncio.sleep(0, result=99)
+    return await a
+
+
+check("delegate await -> coroutine", asyncio.run(_deleg_sleep()) == 99)
+
+_order = []
+
+
+async def _worker(name, delay):
+    a = m.Awaiter()
+    a.fut = asyncio.sleep(delay)
+    await a
+    _order.append(name)
+
+
+async def _interleave():
+    await asyncio.gather(_worker("slow", 0.02), _worker("fast", 0.001))
+
+
+asyncio.run(_interleave())
+check("delegated awaitables truly suspend (interleave)", _order == ["fast", "slow"])
+
+
+async def _deleg_future():
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    loop.call_soon(fut.set_result, 7)
+    a = m.Awaiter()
+    a.fut = fut
+    return await a
+
+
+check("delegate await -> future", asyncio.run(_deleg_future()) == 7)
+
 total = passed + failed
 print(
     f"\nResults: {passed}/{total} passed"

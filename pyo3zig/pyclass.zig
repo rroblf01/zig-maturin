@@ -358,8 +358,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_ge = @hasDecl(T, "__ge__");
     const has_richcompare = has_eq or has_lt or has_le or has_gt or has_ge;
     const has_call = @hasDecl(T, "__call__");
-    // Awaitable: __await__(self) returns the value `await obj` resolves to.
+    // Awaitable: __await__(self) returns the value `await obj` resolves to
+    // immediately. __await_delegate__(self) ?*PyObject instead delegates to a
+    // real Python awaitable (Future/coroutine), so `await obj` truly suspends.
     const has_await = @hasDecl(T, "__await__");
+    const has_await_delegate = @hasDecl(T, "__await_delegate__");
+    const has_any_await = has_await or has_await_delegate;
     // __init_subclass__(cls): an implicit classmethod fired when a Python
     // subclass is created (cls is the new subclass).
     const has_init_subclass = @hasDecl(T, "__init_subclass__");
@@ -1276,6 +1280,27 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
+    // am_await via delegation: __await_delegate__(self) returns a real Python
+    // awaitable; we hand back its await-iterator, so `await obj` suspends
+    // exactly as that awaitable does (integrates with the running event loop).
+    const AwaitDelegateWrapper = struct {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const target = T.__await_delegate__(ptr);
+            if (target == null) {
+                zm.PyErr_SetString(zm.PyExc_TypeError(), "no awaitable to delegate to");
+                return null;
+            }
+            return zm.pyo3zig_get_await_iter(target);
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn awaitFn(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
+        }
+    };
+
     // am_aiter: `async for x in obj` — return the async iterator (self, or the
     // user's __aiter__ result).
     const AiterWrapper = struct {
@@ -1675,7 +1700,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_next) slot_count += 1;
             if (has_iter) slot_count += 1;
             if (has_call) slot_count += 1;
-            if (has_await) slot_count += 1;
+            if (has_any_await) slot_count += 1;
             if (has_aiter) slot_count += 1;
             if (has_anext) slot_count += 1;
             if (has_doc) slot_count += 1;
@@ -1788,8 +1813,9 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_call, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&CallWrapper.call))) };
                 slot_idx += 1;
             }
-            if (has_await) {
-                slots[slot_idx] = .{ .slot = zm.Py_am_await, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&AwaitWrapper.awaitFn))) };
+            if (has_any_await) {
+                const await_fn = if (has_await_delegate) &AwaitDelegateWrapper.awaitFn else &AwaitWrapper.awaitFn;
+                slots[slot_idx] = .{ .slot = zm.Py_am_await, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(await_fn))) };
                 slot_idx += 1;
             }
             if (has_aiter) {

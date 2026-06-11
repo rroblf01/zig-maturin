@@ -74,6 +74,17 @@ PyObject* pyo3zig_make_ready_awaitable(PyObject* value) { return pzra_new(value,
 /* Awaitable that raises StopAsyncIteration (ends an `async for`). */
 PyObject* pyo3zig_make_stop_async_awaitable(void) { return pzra_new(NULL, 1); }
 
+/* Return the await-iterator of an arbitrary awaitable (coroutine, Future, or an
+ * object with __await__), mirroring CPython's GET_AWAITABLE. Used to delegate a
+ * class's __await__ to a real awaitable so `await obj` truly suspends. */
+PyObject* pyo3zig_get_await_iter(PyObject* awaitable) {
+    PyTypeObject* t = Py_TYPE(awaitable);
+    if (t->tp_as_async && t->tp_as_async->am_await) {
+        return t->tp_as_async->am_await(awaitable);
+    }
+    return PyObject_CallMethod(awaitable, "__await__", NULL);
+}
+
 /* __class_getitem__: build a types.GenericAlias so classes are subscriptable in
  * type hints (e.g. Stack[int]). origin is the class, item the subscript. */
 PyObject* pyo3zig_GenericAlias(PyObject* origin, PyObject* item) {

@@ -167,6 +167,7 @@ pub const HashNotImplemented = pycall.HashNotImplemented;
 pub const PyObject_ClearWeakRefs = pycall.PyObject_ClearWeakRefs;
 pub const pyo3zig_make_ready_awaitable = pycall.pyo3zig_make_ready_awaitable;
 pub const pyo3zig_make_stop_async_awaitable = pycall.pyo3zig_make_stop_async_awaitable;
+pub const pyo3zig_get_await_iter = pycall.pyo3zig_get_await_iter;
 pub const pyo3zig_GenericAlias = pycall.pyo3zig_GenericAlias;
 pub const pyo3zig_VisitManagedDict = pycall.pyo3zig_VisitManagedDict;
 pub const pyo3zig_ClearManagedDict = pycall.pyo3zig_ClearManagedDict;

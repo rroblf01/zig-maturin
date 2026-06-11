@@ -725,6 +725,20 @@ const ARange = extern struct {
 };
 const ARangeClass = pz.PyClass(ARange, .{ .init_args = &.{"stop"} });
 
+// Real suspension by delegation: `await Awaiter()` defers to the Python
+// awaitable stored in `fut` (e.g. an asyncio coroutine/Future), so it suspends
+// to the running event loop exactly as that awaitable does.
+const Awaiter = extern struct {
+    fut: ?*pz.PyObject,
+    pub fn init() Awaiter {
+        return .{ .fut = null };
+    }
+    pub fn __await_delegate__(self: *Awaiter) ?*pz.PyObject {
+        return self.fut;
+    }
+};
+const AwaiterClass = pz.PyClass(Awaiter, .{});
+
 // os.PathLike: os.fspath(FilePath(id)) -> "/tmp/file<id>".
 const FilePath = extern struct {
     id: i64,
@@ -894,7 +908,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("dt_year", dt_year),
         pz.pyFnNamed("next_day", next_day),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass, AwaiterClass },
 });
 
 comptime {
