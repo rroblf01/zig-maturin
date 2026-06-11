@@ -207,12 +207,13 @@ classes also support `weakref.ref(obj)` and a managed `__dict__` (arbitrary
 Python attributes, GC-traced) — both cleared on dealloc. Value classes (no
 PyObject field) have neither, keeping instances minimal.
 
-**Subclassing from Python:** value classes (no `__deinit__`, no PyObject fields)
-set `Py_TPFLAGS_BASETYPE`, so Python code can `class Sub(MyClass): ...` and
-inherit fields, methods, and operators. Classes that need a custom destructor or
-cyclic GC are not subclassable (they require teardown orchestration that is out
-of scope). Wider integers `i65..i128`/`u65..u128` are supported as arguments and
-return values (round-tripped through CPython's bigint).
+**Subclassing from Python:** every class is `Py_TPFLAGS_BASETYPE`, so Python code
+can `class Sub(MyClass): ...` and inherit fields, methods, and operators —
+including classes with `__deinit__` or cyclic GC. Teardown runs in `tp_finalize`,
+so CPython's `subtype_dealloc` correctly tears down a subclass's `__dict__`,
+weakrefs, and GC; `__deinit__` fires for subclass instances and cycles through
+them stay collectable. Wider integers `i65..i128`/`u65..u128` are supported as
+arguments and return values (round-tripped through CPython's bigint).
 
 **`PyClass` config:**
 

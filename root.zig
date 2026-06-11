@@ -209,6 +209,7 @@ pub const Py_tp_doc = pytypes.Py_tp_doc;
 pub const Py_tp_call = pytypes.Py_tp_call;
 pub const Py_tp_traverse = pytypes.Py_tp_traverse;
 pub const Py_tp_clear = pytypes.Py_tp_clear;
+pub const Py_tp_finalize = pytypes.Py_tp_finalize;
 pub const Py_nb_add = pytypes.Py_nb_add;
 pub const Py_nb_true_divide = pytypes.Py_nb_true_divide;
 pub const Py_nb_floor_divide = pytypes.Py_nb_floor_divide;

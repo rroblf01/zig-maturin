@@ -781,6 +781,57 @@ async def _deleg_future():
 
 check("delegate await -> future", asyncio.run(_deleg_future()) == 7)
 
+# test_subclass_gc_and_deinit_classes
+# GC class (Node) is now subclassable; __deinit__ fires, dict + cycles work.
+class _SubNode(m.Node):
+    pass
+
+
+_sn_before = m.get_node_deinit_count()
+_sn = _SubNode()
+_sn.next = m.Node()
+_sn.py_attr = "x"
+check("subclass of GC class: attrs", _sn.py_attr == "x")
+del _sn
+gc.collect()
+check("subclass of GC class: __deinit__ fires", m.get_node_deinit_count() >= _sn_before + 1)
+
+
+# __deinit__ (non-GC) class is subclassable too.
+class _SubTracker(m.DeinitTracker):
+    pass
+
+
+_st_before = m.get_deinit_count()
+_st = _SubTracker()
+del _st
+gc.collect()
+check("subclass of __deinit__ class: fires", m.get_deinit_count() == _st_before + 1)
+
+
+# Cycle through a subclass (framework field + managed dict) is collectable.
+class _CycNode(m.Node):
+    pass
+
+
+_cyc_before = m.get_node_deinit_count()
+_ca = _CycNode()
+_cb = _CycNode()
+_ca.next = _cb
+_cb.next = _ca
+_ca.loop = _ca
+del _ca, _cb
+gc.collect()
+check("cycle through subclass collectable", m.get_node_deinit_count() >= _cyc_before + 2)
+
+# weakref on a subclass instance.
+_wsn = _SubNode()
+_wref = weakref.ref(_wsn)
+check("weakref on subclass", _wref() is _wsn)
+del _wsn
+gc.collect()
+check("weakref on subclass cleared", _wref() is None)
+
 total = passed + failed
 print(
     f"\nResults: {passed}/{total} passed"

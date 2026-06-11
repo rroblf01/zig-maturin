@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **Every class is subclassable from Python**, including those with `__deinit__`
+  or cyclic GC. Teardown moved to `tp_finalize` (running `__deinit__` and
+  releasing PyObject fields) so CPython's `subtype_dealloc` owns the actual
+  deallocation — clearing a subclass's `__dict__`/weakrefs, GC untracking, the
+  correct `tp_free`, and the heaptype reference. `Py_TPFLAGS_BASETYPE` is now
+  always set; `__deinit__` fires for subclass instances and cycles through them
+  (via fields or the managed dict) stay collectable.
 - **Suspending coroutines (`__await_delegate__`)**: a class can return a real
   Python awaitable (Future/coroutine) to delegate to, so `await obj` genuinely
   suspends to the running event loop (verified: delegated awaitables interleave
@@ -113,9 +120,8 @@ All notable changes to this project are documented here. The format is based on
   allocator. Fixes a type-reference leak when `__init__` failed.
 
 ### Not yet
-- **Inheriting a built-in base** (e.g. custom `Exception` subclasses) and
-  subclassing classes that need a custom destructor — both need teardown
-  orchestration beyond this release.
+- **Inheriting a built-in base** (e.g. custom `Exception` subclasses) — needs a
+  non-`object` base wired through the spec.
 - **weakref and `__dict__` for non-GC value classes**: both need the GC
   pre-header. A value class could only get them via an explicit
   `tp_weaklistoffset`/`tp_dictoffset` field plus a subclass-safe custom dealloc
@@ -123,9 +129,6 @@ All notable changes to this project are documented here. The format is based on
   make the class GC and get both. (weakref/`__dict__` work on GC classes today.)
 - **Inheriting from a `pz.enumClass`** as a Zig `PyClass` base (the IntEnum is a
   standalone Python type, not a Zig-backed class).
-- **Subclassing classes that need a custom destructor** (`__deinit__` or GC
-  classes): `Py_TPFLAGS_BASETYPE` is set only for value classes, where CPython's
-  default dealloc safely handles a subclass's managed `__dict__` and GC.
 
 ## [0.2.0] - 2026-06-10
 

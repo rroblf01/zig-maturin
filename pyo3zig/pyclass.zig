@@ -437,12 +437,13 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
 
     const is_gc = structHasPyObjectField(T);
     const has_deinit = @hasDecl(T, "__deinit__");
-    // A class needs a custom tp_dealloc only when it must run __deinit__ or
-    // release PyObject fields. Otherwise we omit tp_dealloc and let CPython's
-    // default handle teardown — which also makes the type safe to subclass from
-    // Python (the default orchestrates a subclass's managed __dict__ and GC).
-    const needs_custom_dealloc = has_deinit or is_gc;
-    const can_subclass = !needs_custom_dealloc;
+    // Teardown (running __deinit__ and releasing PyObject fields) is done in
+    // tp_finalize rather than a custom tp_dealloc. That lets CPython's
+    // subtype_dealloc own the actual deallocation — weakref/__dict__ clearing,
+    // GC untracking, the correct tp_free, and the heaptype reference — which it
+    // does correctly for Python subclasses too. So every class is subclassable.
+    const needs_finalize = has_deinit or is_gc;
+    const can_subclass = true;
 
     // Cached type object (set once the type is built), used for isinstance
     // checks in operator dispatch so subclasses dispatch correctly.
@@ -451,32 +452,16 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         var obj: ?*zm.PyObject = null;
     };
 
-    const DeallocWrapper = struct {
-        fn dealloc(obj: ?*zm.PyObject) callconv(.c) void {
+    // tp_finalize: runs once before deallocation (CPython saves/restores any
+    // pending exception around it). releaseFields is idempotent (it nulls each
+    // field), so a prior tp_clear during cycle collection is harmless.
+    const FinalizeWrapper = struct {
+        fn finalize(obj: ?*zm.PyObject) callconv(.c) void {
             if (obj) |o| {
-                const header = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(o)));
-                const ty = @as(?*zm.PyObject, @ptrCast(@alignCast(header.ob_type)));
-                // GC objects must be untracked before running teardown.
-                if (is_gc) zm.PyObject_GC_UnTrack(@as(?*anyopaque, @ptrCast(o)));
-                // Invalidate any weak references before the object goes away
-                // (managed weakref is enabled only for GC types; our custom
-                // dealloc must clear it explicitly).
-                if (is_gc) zm.PyObject_ClearWeakRefs(o);
                 if (@hasDecl(T, "__deinit__")) {
                     Cell.ptrFromObj(o).__deinit__();
                 }
-                // Release the framework-owned references to PyObject fields and
-                // the managed __dict__.
                 if (is_gc) releaseFields(T, o);
-                if (is_gc) zm.pyo3zig_ClearManagedDict(o);
-                if (is_gc) {
-                    zm.PyObject_GC_Del(@as(?*anyopaque, @ptrCast(o)));
-                } else {
-                    zm.PyObject_Free(@as(?*anyopaque, @ptrCast(o)));
-                }
-                // Heap types are reference-counted; release the type ref taken
-                // when the instance was allocated.
-                zm.Py_XDECREF(ty);
             }
         }
     };
@@ -1686,7 +1671,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
 
             comptime var slot_count: usize = 3; // dealloc(optional) handled below
-            if (needs_custom_dealloc) slot_count += 1;
+            if (needs_finalize) slot_count += 1;
             if (has_any_method) slot_count += 1;
             if (has_str) slot_count += 1;
             if (has_repr) slot_count += 1;
@@ -1748,11 +1733,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
 
             var slots: [slot_count]zm.PyType_Slot = undefined;
             var slot_idx: usize = 0;
-            // tp_dealloc only when we must run __deinit__ or release fields;
-            // omitting it lets CPython's default dealloc make the type
-            // subclassable from Python.
-            if (needs_custom_dealloc) {
-                slots[slot_idx] = .{ .slot = zm.Py_tp_dealloc, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DeallocWrapper.dealloc))) };
+            // tp_finalize (not a custom tp_dealloc) runs __deinit__ and releases
+            // PyObject fields; CPython's subtype_dealloc does the rest, so the
+            // type stays subclassable from Python.
+            if (needs_finalize) {
+                slots[slot_idx] = .{ .slot = zm.Py_tp_finalize, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&FinalizeWrapper.finalize))) };
                 slot_idx += 1;
             }
             slots[slot_idx] = .{ .slot = zm.Py_tp_new, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&NewWrapper.new))) };
