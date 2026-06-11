@@ -678,6 +678,17 @@ _h.temp = 5
 check("descriptor __set__ again", _h.temp == 10)
 check("descriptor on class", _Holder.temp == 10)
 
+# test_dir_sizeof_setname
+check("__dir__", dir(m.Introspect(0)) == ["alpha", "beta", "gamma"])
+check("__sizeof__", sys.getsizeof(m.Introspect(0)) == 64)
+
+
+class _SetNameHolder:
+    field = m.Doubler()
+
+
+check("__set_name__", vars(_SetNameHolder)["field"].name_len == len("field"))
+
 total = passed + failed
 print(
     f"\nResults: {passed}/{total} passed"

@@ -1550,10 +1550,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 // method converts a returned struct to a dict, not an instance —
                 // so __copy__/__deepcopy__ would misbehave and are omitted.)
                 const plain_dunders = .{
-                    "__exit__",      "__reduce__",      "__reversed__", "__format__",
-                    "__bytes__",     "__trunc__",       "__floor__",    "__ceil__",
-                    "__round__",     "__getstate__",    "__setstate__", "__fspath__",
-                    "__length_hint__",
+                    "__exit__",        "__reduce__",     "__reversed__",  "__format__",
+                    "__bytes__",       "__trunc__",      "__floor__",     "__ceil__",
+                    "__round__",       "__getstate__",   "__setstate__",  "__fspath__",
+                    "__length_hint__", "__dir__",        "__sizeof__",    "__set_name__",
                 };
                 for (plain_dunders) |dn| {
                     if (@hasDecl(T, dn)) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, dn, @field(T, dn))};

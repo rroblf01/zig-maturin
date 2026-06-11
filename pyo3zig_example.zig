@@ -724,8 +724,9 @@ const FilePathClass = pz.PyClass(FilePath, .{ .init_args = &.{"id"} });
 // value; __set__ stores twice the assigned value on the owner instance.
 const Doubler = extern struct {
     value: i64,
+    name_len: i64,
     pub fn init() Doubler {
-        return .{ .value = 0 };
+        return .{ .value = 0, .name_len = 0 };
     }
     pub fn __get__(self: *Doubler, obj: ?*pz.PyObject, objtype: ?*pz.PyObject) i64 {
         _ = obj;
@@ -736,8 +737,30 @@ const Doubler = extern struct {
         _ = obj;
         self.value = value * 2;
     }
+    // Called at class-creation time with the attribute name it was bound to.
+    pub fn __set_name__(self: *Doubler, owner: ?*pz.PyObject, name: []const u8) void {
+        _ = owner;
+        self.name_len = @intCast(name.len);
+    }
 };
 const DoublerClass = pz.PyClass(Doubler, .{});
+
+// dir(obj) and sys.getsizeof(obj) via __dir__ / __sizeof__.
+const Introspect = extern struct {
+    n: i64,
+    pub fn init(n: i64) Introspect {
+        return .{ .n = n };
+    }
+    pub fn __dir__(self: *Introspect) [3][]const u8 {
+        _ = self;
+        return .{ "alpha", "beta", "gamma" };
+    }
+    pub fn __sizeof__(self: *Introspect) i64 {
+        _ = self;
+        return 64;
+    }
+};
+const IntrospectClass = pz.PyClass(Introspect, .{ .init_args = &.{"n"} });
 
 // bytearray (and bytes/str) decode to a borrowed []const u8.
 fn sum_bytes(data: []const u8) i64 {
@@ -832,7 +855,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("dt_year", dt_year),
         pz.pyFnNamed("next_day", next_day),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass },
 });
 
 comptime {

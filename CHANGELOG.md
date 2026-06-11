@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **`__dir__`, `__sizeof__`, `__set_name__`**: customize `dir(obj)`,
+  `sys.getsizeof(obj)`, and react to being bound as a class attribute.
 - **Descriptor protocol** (`__get__` / `__set__` / `__delete__`): a class can be
   a managed attribute on another class (`tp_descr_get` / `tp_descr_set`); the
   assigned value in `__set__` is converted to its declared Zig type.

@@ -168,6 +168,9 @@ pub fn classStub(comptime spec: anytype) []const u8 {
         .{ "__setstate__", &[_][]const u8{"state"} },
         .{ "__fspath__", &[_][]const u8{} },
         .{ "__length_hint__", &[_][]const u8{} },
+        .{ "__dir__", &[_][]const u8{} },
+        .{ "__sizeof__", &[_][]const u8{} },
+        .{ "__set_name__", &[_][]const u8{ "owner", "name" } },
     };
     inline for (dunders) |d| {
         if (@hasDecl(T, d[0])) {
