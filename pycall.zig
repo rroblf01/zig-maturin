@@ -223,6 +223,16 @@ pub extern fn PyDict_New() callconv(.c) ?*PyObject;
 pub extern fn PyDict_SetItemString(?*PyObject, [*:0]const u8, ?*PyObject) callconv(.c) c_int;
 pub extern fn PyDict_GetItemString(?*PyObject, [*:0]const u8) callconv(.c) ?*PyObject;
 pub extern fn PyDict_Size(?*PyObject) callconv(.c) isize;
+// Generic-key dict ops (for HashMap<->dict with non-string keys). SetItem does
+// not steal; Next borrows the yielded key/value (pos starts at 0).
+pub extern fn PyDict_SetItem(?*PyObject, ?*PyObject, ?*PyObject) callconv(.c) c_int;
+pub extern fn PyDict_Next(?*PyObject, *isize, *?*PyObject, *?*PyObject) callconv(.c) c_int;
+
+// Set / frozenset.
+pub extern fn PySet_New(?*PyObject) callconv(.c) ?*PyObject;
+pub extern fn PyFrozenSet_New(?*PyObject) callconv(.c) ?*PyObject;
+pub extern fn PySet_Add(?*PyObject, ?*PyObject) callconv(.c) c_int;
+pub extern fn pyo3zig_PyAnySet_Check(?*PyObject) callconv(.c) c_int;
 
 // Tuple functions
 pub extern fn PyTuple_New(isize) callconv(.c) ?*PyObject;

@@ -53,21 +53,24 @@ changes to either wait for a 2.0.
 - **`zig-maturin generate-ci`**: writes a GitHub Actions workflow that builds
   wheels across Linux/macOS/Windows × CPython versions and publishes to PyPI on a
   tag (Trusted Publishing). Toolchain-free (uses the `ziglang` wheel).
-- **Richer type stubs**: the generated `.pyi` now reflects `complex`, computed
-  `@property` accessors (`classStub` `.properties`), variadic functions
-  (`*args`/`**kwargs` via `moduleStub` `.raw`), and custom exception subclasses
-  (`pz.exceptionStub("Name", "Base")`).
+- **Richer type stubs**: the generated `.pyi` now reflects `complex`, `set` /
+  `frozenset` / `dict`, computed `@property` accessors (`classStub`
+  `.properties`), variadic functions (`*args`/`**kwargs` via `moduleStub`
+  `.raw`), custom exception subclasses (`pz.exceptionStub("Name", "Base")`), and
+  base classes (`classStub` `.base`).
+- **`dict`↔`std.HashMap` conversion**: a Python `dict` maps to/from a managed
+  `std.StringHashMap(V)` / `std.AutoHashMap(K, V)` as arguments and return values
+  (argument maps are backed by the per-call arena). Keys/values convert by their
+  element types.
+- **`set` / `frozenset` output**: `pz.PySet` and `pz.PyFrozenSet` wrapper types
+  build Python sets from Zig (like `pz.PyList` / `pz.PyDict`).
+- **Zig-class inheritance** (`.base = SomeZigClass`): a `PyClass` can inherit from
+  another `PyClass` (`Py_tp_base`). The derived struct embeds the base struct as
+  its first field; the base's methods and field accessors are inherited and
+  operate correctly on derived instances, `isinstance`/`issubclass` work, and a
+  Python class can further subclass the derived type.
 
 ### Not yet
-- **`set` / `frozenset` and `dict`↔`HashMap` typed conversion**: Python sets and
-  dicts already cross the boundary as a raw `*pz.PyObject` (full manual control);
-  a typed mapping awaits dedicated wrapper types like the existing `PyList` /
-  `PyDict` and is deferred to keep the comptime converter unambiguous.
-- **Zig-class inheritance from another Zig class**: a Python subclass of a Zig
-  class works, but a Zig `PyClass` cannot yet set another `PyClass` as its base —
-  it needs the instance field layout (the `PyCell` offset model) reworked so the
-  derived fields sit after the base's. (Custom exception classes and Python-side
-  subclassing cover the common cases.)
 - **Sub-interpreters**: modules use single-phase init with global state
   (`m_size = -1`); per-interpreter state via multi-phase init (PEP 489) is future
   work.

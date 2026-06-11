@@ -96,6 +96,14 @@ pub const PyDict_SetItemString = pycall.PyDict_SetItemString;
 pub const PyDict_GetItemString = pycall.PyDict_GetItemString;
 pub const PyDict_Size = pycall.PyDict_Size;
 pub const PyDict_Check = pycall.PyDict_Check;
+pub const PyDict_SetItem = pycall.PyDict_SetItem;
+pub const PyDict_Next = pycall.PyDict_Next;
+pub const PySet_New = pycall.PySet_New;
+pub const PyFrozenSet_New = pycall.PyFrozenSet_New;
+pub const PySet_Add = pycall.PySet_Add;
+pub fn PyAnySet_Check(o: ?*pytypes.PyObject) c_int {
+    return pycall.pyo3zig_PyAnySet_Check(o);
+}
 
 pub const PyTuple_New = pycall.PyTuple_New;
 pub const PyTuple_Size = pycall.PyTuple_Size;
@@ -194,6 +202,7 @@ pub const PyModule_AddFunctions = pycall.PyModule_AddFunctions;
 pub const Py_tp_dealloc = pytypes.Py_tp_dealloc;
 pub const Py_tp_new = pytypes.Py_tp_new;
 pub const Py_tp_getset = pytypes.Py_tp_getset;
+pub const Py_tp_base = pytypes.Py_tp_base;
 pub const Py_tp_methods = pytypes.Py_tp_methods;
 pub const Py_tp_str = pytypes.Py_tp_str;
 pub const Py_tp_repr = pytypes.Py_tp_repr;

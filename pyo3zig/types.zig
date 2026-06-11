@@ -218,6 +218,50 @@ pub const PyDict = struct {
     }
 };
 
+pub const PySet = struct {
+    inner: refcount.PyObjectRef,
+
+    pub fn new() !PySet {
+        const ptr = zm.PySet_New(null);
+        if (ptr == null) return error.PythonError;
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
+    }
+
+    pub fn add(self: *const PySet, item: ?*zm.PyObject) !void {
+        if (zm.PySet_Add(self.inner.borrowShared(), item) != 0) {
+            return error.PythonError;
+        }
+    }
+
+    pub fn borrow(self: *const PySet) ?*zm.PyObject {
+        return self.inner.borrowShared();
+    }
+
+    pub fn deinit(self: *PySet) void {
+        self.inner.deinit();
+    }
+};
+
+pub const PyFrozenSet = struct {
+    inner: refcount.PyObjectRef,
+
+    /// Build a frozenset from an iterable (e.g. a `PyList`/`PySet`'s borrow), or
+    /// `null` for an empty frozenset.
+    pub fn new(iterable: ?*zm.PyObject) !PyFrozenSet {
+        const ptr = zm.PyFrozenSet_New(iterable);
+        if (ptr == null) return error.PythonError;
+        return .{ .inner = refcount.PyObjectRef.noRef(ptr) };
+    }
+
+    pub fn borrow(self: *const PyFrozenSet) ?*zm.PyObject {
+        return self.inner.borrowShared();
+    }
+
+    pub fn deinit(self: *PyFrozenSet) void {
+        self.inner.deinit();
+    }
+};
+
 pub const PyTuple = struct {
     inner: refcount.PyObjectRef,
 

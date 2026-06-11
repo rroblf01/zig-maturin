@@ -18,6 +18,8 @@ pub fn pyType(comptime T: type) []const u8 {
     if (std.mem.endsWith(u8, tn, "PyList")) return "list";
     if (std.mem.endsWith(u8, tn, "PyDict")) return "dict";
     if (std.mem.endsWith(u8, tn, "PyTuple")) return "tuple";
+    if (std.mem.endsWith(u8, tn, "PyFrozenSet")) return "frozenset";
+    if (std.mem.endsWith(u8, tn, "PySet")) return "set";
 
     switch (@typeInfo(T)) {
         .bool => return "bool",
@@ -131,13 +133,20 @@ pub fn classStub(comptime spec: anytype) []const u8 {
     const has_init = @hasField(@TypeOf(spec), "init");
     const has_methods = @hasField(@TypeOf(spec), "methods");
     const has_properties = @hasField(@TypeOf(spec), "properties");
+    // `.base = "Animal"` emits `class Name(Base):` for an inheriting class.
+    const base_suffix = if (@hasField(@TypeOf(spec), "base")) "(" ++ spec.base ++ ")" else "";
 
-    comptime var out: []const u8 = "class " ++ spec.name ++ ":\n";
+    comptime var out: []const u8 = "class " ++ spec.name ++ base_suffix ++ ":\n";
     comptime var has_body = false;
 
-    inline for (fields) |f| {
-        out = out ++ "    " ++ f.name ++ ": " ++ pyType(f.type) ++ "\n";
-        has_body = true;
+    // When inheriting (`.base`), the first field is the embedded base struct;
+    // its attributes are inherited, so skip it here.
+    const field_skip = if (@hasField(@TypeOf(spec), "base")) 1 else 0;
+    inline for (fields, 0..) |f, i| {
+        if (i >= field_skip) {
+            out = out ++ "    " ++ f.name ++ ": " ++ pyType(f.type) ++ "\n";
+            has_body = true;
+        }
     }
 
     if (has_properties) {

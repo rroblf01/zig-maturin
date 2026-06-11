@@ -647,6 +647,44 @@ try:
 except m.DemoError as e:
     check("custom exception raised", "non-negative" in str(e), str(e))
 
+# test_zig_inheritance (a Zig class inheriting from another Zig class)
+_dog = m.Dog(4, True)
+check("derived isinstance of base", isinstance(_dog, m.Animal))
+check("derived issubclass of base", issubclass(m.Dog, m.Animal))
+check("inherited base method", _dog.legs_count() == 4)
+check("inherited base field", _dog.legs == 4)
+check("derived own method", _dog.bark() is True)
+check("derived own field", _dog.good is True)
+check("base instance not derived", not isinstance(m.Animal(2), m.Dog))
+
+
+# A Python class can further subclass the derived Zig class.
+class Puppy(m.Dog):
+    def speak(self):
+        return "yip"
+
+
+_pup = Puppy(3, False)
+check("python subclass of derived: inherited", _pup.legs_count() == 3)
+check("python subclass of derived: own zig method", _pup.bark() is False)
+check("python subclass of derived: python method", _pup.speak() == "yip")
+check("python subclass isinstance chain", isinstance(_pup, m.Dog) and isinstance(_pup, m.Animal))
+
+# test_hashmap (dict <-> std.StringHashMap / AutoHashMap)
+check("dict -> StringHashMap sum", m.dict_sum({"a": 1, "b": 2, "c": 3}) == 6)
+check("dict -> AutoHashMap lookup hit", m.lookup_zero({0: 99, 1: 1}) == 99)
+check("dict -> AutoHashMap lookup miss", m.lookup_zero({5: 1}) == -1)
+try:
+    m.dict_sum([1, 2])
+    check("dict arg type error", False, "no exception")
+except TypeError as e:
+    check("dict arg type error", "dict" in str(e), str(e))
+
+# test_set_output (PySet wrapper -> Python set)
+_uniq = m.unique_bytes(b"aabbc")
+check("set output type", isinstance(_uniq, set))
+check("set output value", _uniq == {97, 98, 99})
+
 # test_pathlike (os.PathLike argument coerced via os.fspath)
 import pathlib  # noqa: E402
 

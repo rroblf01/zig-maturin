@@ -258,6 +258,9 @@ PyObject* pyo3zig_PyByteArray_Type(void) { return (PyObject*)&PyByteArray_Type; 
 /* PyComplex_Check is a macro; wrap it so Zig can call it. */
 int pyo3zig_PyComplex_Check(PyObject* o) { return PyComplex_Check(o); }
 
+/* PyAnySet_Check (set or frozenset) is a macro; wrap it for Zig. */
+int pyo3zig_PyAnySet_Check(PyObject* o) { return PyAnySet_Check(o); }
+
 /* The canonical "this type is unhashable" hash function. CPython special-cases
  * this exact pointer in tp_hash to expose __hash__ as None (the semantics of a
  * class that defines __eq__ but no __hash__). */

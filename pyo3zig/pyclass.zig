@@ -1468,10 +1468,32 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
 
     const has_properties = @hasField(@TypeOf(config), "properties");
 
+    // Zig-class inheritance: `.base = SomeZigClass` makes this a subclass of
+    // another `PyClass` (Py_tp_base). Contract: the derived struct's FIRST field
+    // is the base's struct, so the base's inherited field accessors and methods
+    // read the same memory offset on a derived instance (the `PyCell` data sits
+    // right after the object header for both). That base field is not re-exposed
+    // as an attribute here — the inherited base getsets already cover it.
+    const has_base = @hasField(@TypeOf(config), "base");
+    const base_skip = if (has_base) 1 else 0;
+    if (has_base) {
+        const BaseT = @FieldType(config.base.pycell.ObjectLayout, "data");
+        const fields0 = std.meta.fields(T);
+        if (fields0.len == 0 or fields0[0].type != BaseT) {
+            @compileError("a class with `.base` must have the base's struct (" ++
+                @typeName(BaseT) ++ ") as its first field");
+        }
+    }
+
     const TypeBuilder = struct {
         fn getTypeObject() ?*zm.PyObject {
+            // Return the already-built type so repeated calls (e.g. a derived
+            // class referencing this one as its base) share one type object.
+            if (TypeRef.obj) |existing| return existing;
             const fields = comptime std.meta.fields(T);
-            const field_count = fields.len;
+            // The embedded base field (when `.base` is set) is not exposed as a
+            // getset, so it doesn't count toward the field accessors.
+            const field_count = fields.len - base_skip;
             const prop_count = if (has_properties) config.properties.len else 0;
             // +1 for the __dict__ descriptor on GC classes (managed dict; not
             // under abi3), +1 sentinel.
@@ -1489,6 +1511,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             });
 
             inline for (fields, 0..) |field, i| {
+                if (i < base_skip) continue; // the embedded base field
                 const is_pyobj_field = field.type == ?*zm.PyObject;
                 const FieldWrapper = struct {
                     fn getter(obj: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) ?*zm.PyObject {
@@ -1534,7 +1557,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     }
                     break :blk false;
                 });
-                getset_defs[i] = .{
+                getset_defs[i - base_skip] = .{
                     .name = field_name,
                     .get = &FieldWrapper.getter,
                     .set = if (is_readonly) null else &FieldWrapper.setter,
@@ -1737,9 +1760,17 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_descr_assign) slot_count += 1;
             if (has_any_buffer) slot_count += 1;
             if (is_gc) slot_count += 2; // tp_traverse + tp_clear
+            if (has_base) slot_count += 1; // Py_tp_base
 
             var slots: [slot_count]zm.PyType_Slot = undefined;
             var slot_idx: usize = 0;
+            // Base class (Zig-class inheritance): set before the rest so the
+            // derived type inherits the base's methods/getsets via the MRO.
+            if (has_base) {
+                const base_type = config.base.py_type_obj() orelse return null;
+                slots[slot_idx] = .{ .slot = zm.Py_tp_base, .pfunc = @ptrCast(base_type) };
+                slot_idx += 1;
+            }
             // tp_finalize (not a custom tp_dealloc) runs __deinit__ and releases
             // PyObject fields; CPython's subtype_dealloc does the rest, so the
             // type stays subclassable from Python.

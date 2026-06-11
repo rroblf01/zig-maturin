@@ -170,6 +170,8 @@ Zig error surface as a Python exception.
 | `[]const u8` | `str` / `bytes` / `bytearray` / `os.PathLike` (borrowed) | `str` |
 | `?T` | `T` or `None` | `T` or `None` |
 | `[]T`, `[N]T` | `list` / `tuple` | `list` |
+| `std.StringHashMap(V)`, `std.AutoHashMap(K,V)` | `dict` | `dict` |
+| `pz.PySet`, `pz.PyFrozenSet` | — | `set` / `frozenset` |
 | tuple struct | `list` / `tuple` | `tuple` |
 | plain struct | `dict` (by field name; field defaults honored) | `dict` (by field name) |
 | `*MyClass` | an instance of `MyClass` (borrowed) | — |
@@ -358,6 +360,37 @@ fn check(n: i64) !i64 {
 `MyError` becomes `mymod.MyError` (a `ValueError` subclass) on the Python side.
 Pass `null` as the base for a plain `Exception`. (`pz.newException(...)` remains
 for one-off types not registered as a class.)
+
+### Inheritance
+
+A Zig class can inherit from another Zig class with `.base`. The derived struct
+must embed the base's struct as its **first field**; the base's methods and
+field accessors are then inherited and `isinstance`/`issubclass` work:
+
+```zig
+const Animal = extern struct {
+    legs: i64,
+    pub fn init(legs: i64) Animal { return .{ .legs = legs }; }
+};
+const AnimalClass = pz.PyClass(Animal, .{ .init_args = &.{"legs"}, ... });
+
+const Dog = extern struct {
+    base: Animal,            // the base, embedded first
+    good: bool,
+    pub fn init(legs: i64, good: bool) Dog {
+        return .{ .base = .{ .legs = legs }, .good = good };
+    }
+};
+const DogClass = pz.PyClass(Dog, .{ .base = AnimalClass, .init_args = &.{ "legs", "good" }, ... });
+```
+
+```python
+d = Dog(4, True)
+isinstance(d, Animal)   # True; d.legs and inherited methods work
+class Puppy(Dog): ...   # Python can subclass the derived class too
+```
+
+Register the base in `.classes` before the derived class.
 
 ### Computed properties
 

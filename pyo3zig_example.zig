@@ -563,6 +563,31 @@ fn check_positive(n: i64) !i64 {
     return n;
 }
 
+// dict -> std.StringHashMap argument: sum all values (the map is backed by the
+// per-call arena, freed automatically after the call).
+fn dict_sum(m: std.StringHashMap(i64)) i64 {
+    var total: i64 = 0;
+    var it = m.iterator();
+    while (it.next()) |e| total += e.value_ptr.*;
+    return total;
+}
+
+// dict -> std.AutoHashMap (int keys): return the value at key 0, or -1.
+fn lookup_zero(m: std.AutoHashMap(i64, i64)) i64 {
+    return m.get(0) orelse -1;
+}
+
+// Returns a Python set of the distinct byte values in `data`.
+fn unique_bytes(data: []const u8) !pz.PySet {
+    var set = try pz.PySet.new();
+    for (data) |b| {
+        const item = pz.PyLong_FromLongLong(@intCast(b)) orelse return error.PythonError;
+        defer pz.Py_XDECREF(item);
+        try set.add(item);
+    }
+    return set;
+}
+
 // Variadic: sums every positional argument, plus a "bonus" keyword if present.
 fn sum_all(args: ?*pz.PyObject, kwargs: ?*pz.PyObject) i64 {
     var total: i64 = 0;
@@ -578,6 +603,43 @@ fn sum_all(args: ?*pz.PyObject, kwargs: ?*pz.PyObject) i64 {
     }
     return total;
 }
+
+// Zig-class inheritance: Dog inherits from Animal. The base struct is embedded
+// as the first field, so Animal's inherited methods/field accessors read the
+// same memory on a Dog instance.
+const Animal = extern struct {
+    legs: i64,
+    pub fn init(legs: i64) Animal {
+        return .{ .legs = legs };
+    }
+};
+fn animal_legs(self: *Animal) i64 {
+    return self.legs;
+}
+const AnimalClass = pz.PyClass(Animal, .{
+    .init_args = &.{"legs"},
+    .methods = &[_]pz.PyMethodDef{
+        pz.wrapMethodNamed(Animal, "legs_count", animal_legs),
+    },
+});
+
+const Dog = extern struct {
+    base: Animal,
+    good: bool,
+    pub fn init(legs: i64, good: bool) Dog {
+        return .{ .base = .{ .legs = legs }, .good = good };
+    }
+};
+fn dog_bark(self: *Dog) bool {
+    return self.good;
+}
+const DogClass = pz.PyClass(Dog, .{
+    .base = AnimalClass,
+    .init_args = &.{ "legs", "good" },
+    .methods = &[_]pz.PyMethodDef{
+        pz.wrapMethodNamed(Dog, "bark", dog_bark),
+    },
+});
 
 // A class holding a Python object reference -> participates in cyclic GC. The
 // framework owns the `next` reference, visits it in tp_traverse, and clears it
@@ -878,7 +940,23 @@ const STUB = pz.moduleStub(.{
     .{ .name = "cmul", .func = cmul, .args = &.{ "a", "b" } },
     .{ .name = "check_positive", .func = check_positive, .args = &.{"n"} },
     .{ .name = "sum_all", .func = sum_all, .raw = true },
-});
+    .{ .name = "dict_sum", .func = dict_sum, .args = &.{"m"} },
+    .{ .name = "lookup_zero", .func = lookup_zero, .args = &.{"m"} },
+    .{ .name = "unique_bytes", .func = unique_bytes, .args = &.{"data"} },
+}) ++
+    pz.classStub(.{
+        .name = "Animal",
+        .type = Animal,
+        .init = &.{"legs"},
+        .methods = .{.{ .name = "legs_count", .func = animal_legs }},
+    }) ++
+    pz.classStub(.{
+        .name = "Dog",
+        .type = Dog,
+        .base = "Animal",
+        .init = &.{ "legs", "good" },
+        .methods = .{.{ .name = "bark", .func = dog_bark }},
+    });
 
 // Class stubs so type checkers see the classes too.
 const CLASS_STUBS =
@@ -970,8 +1048,11 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("cmul", cmul),
         pz.pyFnNamed("check_positive", check_positive),
         pz.pyFnRaw("sum_all", sum_all),
+        pz.pyFnNamed("dict_sum", dict_sum),
+        pz.pyFnNamed("lookup_zero", lookup_zero),
+        pz.pyFnNamed("unique_bytes", unique_bytes),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass, AwaiterClass, DemoError },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass, AwaiterClass, AnimalClass, DogClass, DemoError },
 });
 
 comptime {
