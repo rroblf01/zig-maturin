@@ -449,8 +449,11 @@ fn __pyi__() []const u8 { return STUB; }
 // register pz.pyFnNamed("__pyi__", __pyi__)
 ```
 
-`classStub` emits a `class` block (struct fields as attributes, `__init__`, and
-methods) so type checkers see your classes too.
+`classStub` emits a `class` block (struct fields as attributes, `__init__`,
+methods, and `.properties` as `@property` accessors). For variadic functions set
+`.raw = true` on the `moduleStub` entry (rendered as `*args, **kwargs`), and for
+custom exceptions use `pz.exceptionStub("MyError", "ValueError")`. `complex`,
+`datetime`, optionals and containers map to their Python spellings automatically.
 
 `zig-maturin build` calls `__pyi__()` on native builds and ships the resulting
 `my_extension.pyi` inside the wheel, so type checkers see your signatures.

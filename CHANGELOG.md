@@ -53,6 +53,10 @@ changes to either wait for a 2.0.
 - **`zig-maturin generate-ci`**: writes a GitHub Actions workflow that builds
   wheels across Linux/macOS/Windows × CPython versions and publishes to PyPI on a
   tag (Trusted Publishing). Toolchain-free (uses the `ziglang` wheel).
+- **Richer type stubs**: the generated `.pyi` now reflects `complex`, computed
+  `@property` accessors (`classStub` `.properties`), variadic functions
+  (`*args`/`**kwargs` via `moduleStub` `.raw`), and custom exception subclasses
+  (`pz.exceptionStub("Name", "Base")`).
 
 ### Not yet
 - **`set` / `frozenset` and `dict`↔`HashMap` typed conversion**: Python sets and
