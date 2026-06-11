@@ -21,6 +21,7 @@ pub fn pyType(comptime T: type) []const u8 {
         .bool => return "bool",
         .int => return "int",
         .float => return "float",
+        .@"enum" => return "int",
         .error_union => |eu| return pyType(eu.payload),
         .optional => |o| return pyType(o.child) ++ " | None",
         .pointer => |p| {

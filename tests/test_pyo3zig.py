@@ -1,5 +1,6 @@
 """Tests for the pyo3zig extension module."""
 
+import copy
 import gc
 import math
 import sys
@@ -564,6 +565,25 @@ try:
     check("weakref rejected for value class", False, "no exception")
 except TypeError:
     check("weakref rejected for value class", True)
+
+# test_enum_conversion
+check("enum next red->green", m.next_color(0) == 1)
+check("enum next green->blue", m.next_color(1) == 2)
+check("enum next blue->red", m.next_color(2) == 0)
+try:
+    m.next_color(7)
+    check("enum out-of-range rejected", False, "no exception")
+except ValueError as e:
+    check("enum out-of-range rejected", "Color" in str(e), str(e))
+
+# test_copy_deepcopy
+v = m.Vec2(3, 4)
+cp = copy.copy(v)
+check("copy.copy -> instance", type(cp) is m.Vec2 and cp.x == 3 and cp.y == 4)
+check("copy.copy is a new object", cp is not v)
+dp = copy.deepcopy(v)
+check("copy.deepcopy -> instance", type(dp) is m.Vec2 and dp.x == 3 and dp.y == 4)
+check("copy.deepcopy is a new object", dp is not v)
 
 total = passed + failed
 print(

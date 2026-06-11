@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **Zig `enum` arguments and return values**: cross the boundary as the enum's
+  integer value; an out-of-range int argument raises `ValueError`.
+- **`copy.copy` / `copy.deepcopy`**: `__copy__(self)` and
+  `__deepcopy__(self, memo)` return a fresh **instance** of the class (wrapped
+  like an operator result, not flattened to a dict).
 - **`weakref` support** for classes that participate in cyclic GC (those with a
   `?*pz.PyObject` field): instances can be the target of `weakref.ref(obj)` via
   `Py_TPFLAGS_MANAGED_WEAKREF`, cleared in the custom dealloc.

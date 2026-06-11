@@ -95,6 +95,7 @@ Zig error surface as a Python exception.
 | `i8`..`i64`, `u8`..`u64` | `int` | `int` |
 | `f32`, `f64` | `float` | `float` |
 | `bool` | `bool` | `bool` |
+| `enum` | `int` (validated; bad value → `ValueError`) | `int` |
 | `[]const u8` | `str` / `bytes` / `bytearray` (borrowed) | `str` |
 | `?T` | `T` or `None` | `T` or `None` |
 | `[]T`, `[N]T` | `list` / `tuple` | `list` |
@@ -161,7 +162,9 @@ Register the class in the module's `.classes` field.
   `__hash__`, `__format__` (`format()` / f-string specs), `__call__` (callable
   instances), `__enter__`/`__exit__` (context manager, `with obj:`), `__reduce__`
   (pickle), `__getstate__`/`__setstate__`, `__bytes__` (`bytes(obj)`),
-  `__floor__`/`__ceil__`/`__trunc__` (`math.*`), `__round__`.
+  `__floor__`/`__ceil__`/`__trunc__` (`math.*`), `__round__`, and
+  `__copy__`/`__deepcopy__` (`copy.copy`/`copy.deepcopy`, returning a fresh
+  instance).
 - Comparisons: `__eq__` (and `__ne__` derived from it), plus `__lt__`, `__le__`,
   `__gt__`, `__ge__` — define any subset (just `__lt__` enables `sorted()`).
   Defining `__eq__` without `__hash__` makes instances unhashable, as in Python.

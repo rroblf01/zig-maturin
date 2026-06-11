@@ -189,6 +189,14 @@ const Vec2 = extern struct {
     pub fn __bool__(self: *Vec2) bool {
         return self.x != 0 or self.y != 0;
     }
+    // copy.copy / copy.deepcopy return a fresh Vec2 instance (not a dict).
+    pub fn __copy__(self: *Vec2) Vec2 {
+        return .{ .x = self.x, .y = self.y };
+    }
+    pub fn __deepcopy__(self: *Vec2, memo: ?*pz.PyObject) Vec2 {
+        _ = memo;
+        return .{ .x = self.x, .y = self.y };
+    }
 };
 
 fn vec2_dot(self: *Vec2, other_x: i64, other_y: i64) i64 {
@@ -485,6 +493,18 @@ fn big_mul(a: i128, b: i128) i128 {
     return a * b;
 }
 
+// A Zig enum crosses the boundary as its integer value; an out-of-range int
+// argument raises ValueError.
+const Color = enum(i64) { red = 0, green = 1, blue = 2 };
+
+fn next_color(c: Color) Color {
+    return switch (c) {
+        .red => .green,
+        .green => .blue,
+        .blue => .red,
+    };
+}
+
 // A class holding a Python object reference -> participates in cyclic GC. The
 // framework owns the `next` reference, visits it in tp_traverse, and clears it
 // in tp_clear, so reference cycles are collectable.
@@ -639,6 +659,7 @@ const STUB = pz.moduleStub(.{
     .{ .name = "vec_dot", .func = vec_dot, .args = &.{ "a", "b" } },
     .{ .name = "power", .func = power, .args = &.{ "base", "exp" } },
     .{ .name = "sum_bytes", .func = sum_bytes, .args = &.{"data"} },
+    .{ .name = "next_color", .func = next_color, .args = &.{"c"} },
 });
 
 // Class stubs so type checkers see the classes too.
@@ -702,6 +723,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("get_node_deinit_count", get_node_deinit_count),
         pz.pyFnNamed("big_mul", big_mul),
         pz.pyFnNamed("sum_bytes", sum_bytes),
+        pz.pyFnNamed("next_color", next_color),
     },
     .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass },
 });

@@ -393,6 +393,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     // formatting, ...). __enter__ is special-cased (void return -> self); the
     // rest are detected directly in the auto_methods loop via @hasDecl.
     const has_enter = @hasDecl(T, "__enter__");
+    // copy.copy / copy.deepcopy: these return a fresh instance of the class, so
+    // (unlike the plain-method dunders) they get instance-wrapping wrappers.
+    const has_copy = @hasDecl(T, "__copy__");
+    const has_deepcopy = @hasDecl(T, "__deepcopy__");
     // Read-only buffer protocol: __buffer__(self) returns a byte slice viewed
     // zero-copy (e.g. by numpy / memoryview). The slice must stay valid while
     // the buffer is held, so back it with a field of the instance.
@@ -1095,6 +1099,72 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
+    // copy.copy(obj): __copy__(self) returns a new value of the class, wrapped
+    // into a fresh instance of self's (sub)type.
+    const CopyWrapper = struct {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const hdr = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(self_obj)));
+            const cls = @as(?*zm.PyObject, @ptrCast(@alignCast(hdr.ob_type)));
+            const RetT = @typeInfo(@TypeOf(T.__copy__)).@"fn".return_type.?;
+            if (@typeInfo(RetT) == .error_union) {
+                const r = T.__copy__(ptr) catch |e| {
+                    errors.setPyExceptionIfNeeded(e);
+                    return null;
+                };
+                return NumberWrapper.convertResult(cls, r);
+            }
+            return NumberWrapper.convertResult(cls, T.__copy__(ptr));
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn meth(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            _ = args_obj;
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
+        }
+    };
+
+    // copy.deepcopy(obj, memo): __deepcopy__(self, memo) returns a new instance.
+    // The memo argument is converted to the second parameter's type (commonly
+    // `?*pz.PyObject`).
+    const DeepCopyWrapper = struct {
+        const Ctx = struct { self: ?*zm.PyObject, args: ?*zm.PyObject };
+        fn inner(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const hdr = @as(*zm.PyObjectHeader, @ptrCast(@alignCast(self_obj)));
+            const cls = @as(?*zm.PyObject, @ptrCast(@alignCast(hdr.ob_type)));
+            const fi = @typeInfo(@TypeOf(T.__deepcopy__)).@"fn";
+            const MemoT = fi.params[1].type.?;
+            const memo_obj = if (args_obj != null and zm.PyTuple_Size(args_obj) > 0)
+                zm.PyTuple_GetItem(args_obj, 0)
+            else
+                null;
+            var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            defer arena.deinit();
+            const memo = conversion.fromPyObject(MemoT, memo_obj, arena.allocator()) catch |err| {
+                funcwrap.setConversionError(err);
+                return null;
+            };
+            if (@typeInfo(fi.return_type.?) == .error_union) {
+                const r = T.__deepcopy__(ptr, memo) catch |e| {
+                    errors.setPyExceptionIfNeeded(e);
+                    return null;
+                };
+                return NumberWrapper.convertResult(cls, r);
+            }
+            return NumberWrapper.convertResult(cls, T.__deepcopy__(ptr, memo));
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return inner(c.self, c.args);
+        }
+        fn meth(self_obj: ?*zm.PyObject, args_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            var ctx = Ctx{ .self = self_obj, .args = args_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+
     // bf_getbuffer: expose a read-only contiguous byte view (memoryview/numpy).
     const BufferWrapper = struct {
         fn getbuffer(exporter: ?*zm.PyObject, view: ?*anyopaque, flags: c_int) callconv(.c) c_int {
@@ -1310,6 +1380,18 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 for (plain_dunders) |dn| {
                     if (@hasDecl(T, dn)) arr = arr ++ &[_]zm.PyMethodDef{wrapMethodNamed(T, dn, @field(T, dn))};
                 }
+                if (has_copy) arr = arr ++ &[_]zm.PyMethodDef{.{
+                    .ml_name = @as(?[*:0]const u8, "__copy__"),
+                    .ml_meth = &CopyWrapper.meth,
+                    .ml_flags = zm.METH_VARARGS,
+                    .ml_doc = null,
+                }};
+                if (has_deepcopy) arr = arr ++ &[_]zm.PyMethodDef{.{
+                    .ml_name = @as(?[*:0]const u8, "__deepcopy__"),
+                    .ml_meth = &DeepCopyWrapper.meth,
+                    .ml_flags = zm.METH_VARARGS,
+                    .ml_doc = null,
+                }};
                 break :blk arr;
             };
             const has_any_method = has_methods or auto_methods.len > 0;

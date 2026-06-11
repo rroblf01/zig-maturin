@@ -18,6 +18,7 @@ fn expectedName(comptime T: type) []const u8 {
         .int => "int",
         .float => "float",
         .bool => "bool",
+        .@"enum" => "int",
         .optional => |o| expectedName(o.child),
         .pointer => |p| if (p.size == .slice and p.child == u8) "str or bytes" else if (p.size == .slice) "list or tuple" else shortName(p.child),
         .array => "list or tuple",
@@ -109,6 +110,10 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
         },
         .bool => {
             return zm.PyBool_FromLong(if (value) 1 else 0);
+        },
+        .@"enum" => {
+            // A Zig enum surfaces as its integer value.
+            return toPyObject(@intFromEnum(value));
         },
         .null => {
             return zm.Py_NewRef(zm.Py_None());
@@ -270,6 +275,16 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
         },
         .bool => {
             return zm.PyObject_IsTrue(obj) != 0;
+        },
+        .@"enum" => |info| {
+            // Accept a Python int, validated against the enum's variants.
+            const tag = try fromPyObject(info.tag_type, obj, allocator);
+            inline for (info.fields) |f| {
+                if (f.value == tag) return @enumFromInt(tag);
+            }
+            const msg = comptime std.fmt.comptimePrint("invalid value for {s}", .{shortName(T)});
+            zm.PyErr_SetString(zm.PyExc_ValueError(), msg);
+            return error.PythonValueError;
         },
         .optional => |info| {
             if (obj == zm.Py_None()) {
