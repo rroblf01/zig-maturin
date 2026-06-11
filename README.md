@@ -68,6 +68,54 @@ pip install -e .                    # editable (PEP 660); re-run to recompile
 python -m build                     # wheel + sdist in dist/
 ```
 
+### What scaffold generates
+
+`zig-maturin scaffold my_extension` writes a complete, buildable project and
+wires up the Zig dependency for you (it runs `zig fetch --save` if `zig` is on
+PATH):
+
+```
+my_extension/
+├── pyproject.toml      # [tool.zig-maturin] config + PEP 517 backend
+├── build.zig           # the Zig build script (links pyo3zig + the C shim)
+├── build.zig.zon       # dependency manifest (zig-maturin pinned with a hash)
+└── src/main.zig        # your extension — edit this
+```
+
+You normally only touch `src/main.zig`. The generated `build.zig` already wires
+in the two modules and the C shim — you rarely need to change it:
+
+```zig
+const zm_dep = b.dependency("zig-maturin", .{ .target = target, .optimize = optimize });
+
+const mod = b.createModule(.{
+    .root_source_file = b.path("src/main.zig"),
+    .target = target,
+    .optimize = optimize,
+    .imports = &.{
+        .{ .name = "zig-maturin", .module = zm_dep.module("zig-maturin") }, // low-level C-API
+        .{ .name = "pyo3zig", .module = zm_dep.module("pyo3zig") },         // high-level layer
+    },
+});
+
+const lib = b.addLibrary(.{ .name = "my_extension", .linkage = .dynamic, .root_module = mod });
+lib.root_module.link_libc = true;
+lib.root_module.addCSourceFile(.{ .file = zm_dep.path("pyo3zig_capi.c"), .flags = &.{} });
+// CPython symbols resolve against the interpreter at import time:
+lib.linker_allow_shlib_undefined = true;
+b.installArtifact(lib);
+```
+
+**Adding pyo3zig to an existing Zig project** (instead of scaffolding): run
+`zig fetch --save=zig-maturin git+https://github.com/rroblf01/zig-maturin`, then
+add the two `.imports` and the `addCSourceFile`/`link_libc`/
+`linker_allow_shlib_undefined` lines above to your `build.zig`.
+
+For a feature-by-feature tour of a real, compiled extension, see the
+[examples walkthrough](examples/README.md) (the source is
+[`pyo3zig_example.zig`](pyo3zig_example.zig), built by `zig build` and exercised
+by the test suite).
+
 ### Mixed Python/Zig packages
 
 Ship pure-Python code alongside the native module: put a package at
@@ -553,6 +601,17 @@ zig-source  = "src/main.zig"
 # python-libdir  = "..."
 # python-lib     = "python312"
 ```
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `error: expected ... found` on `zig build`, or unknown builtins | Wrong Zig version. zig-maturin targets **Zig 0.16**; check `zig version`, or just don't install Zig and let the build pull in the pinned `ziglang` wheel. |
+| `zig fetch failed` during scaffold | No `zig` on PATH at scaffold time. Run the printed command later: `zig fetch --save=zig-maturin git+https://github.com/rroblf01/zig-maturin`. The build itself still works toolchain-free. |
+| `python3-config not found` / `Python.h` missing | Install the Python dev headers (`python3-dev` / `python3-devel`), or use the official `python.org` build. For **cross-compilation** the host can't detect the target's headers — pass `--python-include` (and on Windows `--python-libdir`/`--python-lib`). |
+| `ImportError: undefined symbol: Py...` at import | Almost always an ABI mismatch: the wheel was built for a different Python. Rebuild against the interpreter you're importing into, or build an `abi3 = "3.12"` wheel for forward compatibility. |
+| `ModuleNotFoundError` after `zig build` | `zig build` drops the `.so` in `zig-out/lib/lib<name>.so`; Python needs it as `<name>.so` on `sys.path`. Use `zig-maturin develop` (installs it correctly) instead of importing from `zig-out`. |
+| Interpreter aborts on a Zig panic | Add `pub const panic = pz.panic;` to turn panics into `RuntimeError` (see [Error handling and panics](#error-handling-and-panics)). |
 
 ## Requirements
 
