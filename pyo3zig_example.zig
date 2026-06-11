@@ -488,6 +488,25 @@ const Bytes8 = extern struct {
 };
 const Bytes8Class = pz.PyClass(Bytes8, .{});
 
+// Writable buffer: memoryview/numpy can mutate the bytes in place.
+const MutableBuf = extern struct {
+    data: [4]u8,
+    pub fn init() MutableBuf {
+        return .{ .data = .{ 0, 0, 0, 0 } };
+    }
+    pub fn __buffer_mut__(self: *MutableBuf) []u8 {
+        return self.data[0..];
+    }
+};
+fn mutablebuf_get(self: *MutableBuf, i: i64) i64 {
+    return self.data[@intCast(i)];
+}
+const MutableBufClass = pz.PyClass(MutableBuf, .{
+    .methods = &[_]pz.PyMethodDef{
+        pz.wrapMethodNamed(MutableBuf, "get", mutablebuf_get),
+    },
+});
+
 // Integer wider than 64 bits, round-tripped through CPython's bigint.
 fn big_mul(a: i128, b: i128) i128 {
     return a * b;
@@ -762,6 +781,25 @@ const Introspect = extern struct {
 };
 const IntrospectClass = pz.PyClass(Introspect, .{ .init_args = &.{"n"} });
 
+// __init_subclass__: fires once per Python subclass created (registry pattern).
+var subclass_init_count: i64 = 0;
+
+const Plugin = extern struct {
+    id: i64,
+    pub fn init(id: i64) Plugin {
+        return .{ .id = id };
+    }
+    pub fn __init_subclass__(cls: ?*pz.PyObject) void {
+        _ = cls;
+        subclass_init_count += 1;
+    }
+};
+const PluginClass = pz.PyClass(Plugin, .{ .init_args = &.{"id"} });
+
+fn get_subclass_count() i64 {
+    return subclass_init_count;
+}
+
 // bytearray (and bytes/str) decode to a borrowed []const u8.
 fn sum_bytes(data: []const u8) i64 {
     var total: i64 = 0;
@@ -851,11 +889,12 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("big_mul", big_mul),
         pz.pyFnNamed("sum_bytes", sum_bytes),
         pz.pyFnNamed("next_color", next_color),
+        pz.pyFnNamed("get_subclass_count", get_subclass_count),
         pz.pyFnNamed("make_dt", make_dt),
         pz.pyFnNamed("dt_year", dt_year),
         pz.pyFnNamed("next_day", next_day),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass },
 });
 
 comptime {

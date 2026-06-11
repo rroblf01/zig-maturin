@@ -689,6 +689,33 @@ class _SetNameHolder:
 
 check("__set_name__", vars(_SetNameHolder)["field"].name_len == len("field"))
 
+# test_init_subclass
+_isc_before = m.get_subclass_count()
+
+
+class _P1(m.Plugin):
+    pass
+
+
+class _P2(m.Plugin):
+    pass
+
+
+class _P3(_P1):
+    pass
+
+
+check("__init_subclass__ fires per subclass", m.get_subclass_count() == _isc_before + 3)
+
+# test_writable_buffer
+_mb = m.MutableBuf()
+_mv = memoryview(_mb)
+check("writable buffer not readonly", _mv.readonly is False)
+_mv[0] = 42
+_mv[3] = 99
+check("buffer writes reach object", _mb.get(0) == 42 and _mb.get(3) == 99)
+check("read-only buffer still readonly", memoryview(m.Bytes8(7)).readonly is True)
+
 total = passed + failed
 print(
     f"\nResults: {passed}/{total} passed"

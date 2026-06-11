@@ -360,6 +360,9 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_call = @hasDecl(T, "__call__");
     // Awaitable: __await__(self) returns the value `await obj` resolves to.
     const has_await = @hasDecl(T, "__await__");
+    // __init_subclass__(cls): an implicit classmethod fired when a Python
+    // subclass is created (cls is the new subclass).
+    const has_init_subclass = @hasDecl(T, "__init_subclass__");
     // Async iteration: __anext__(self) returns ?T (null -> StopAsyncIteration);
     // __aiter__ is optional (a type with __anext__ is its own async iterator).
     const has_anext = @hasDecl(T, "__anext__");
@@ -420,10 +423,13 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     // (unlike the plain-method dunders) they get instance-wrapping wrappers.
     const has_copy = @hasDecl(T, "__copy__");
     const has_deepcopy = @hasDecl(T, "__deepcopy__");
-    // Read-only buffer protocol: __buffer__(self) returns a byte slice viewed
-    // zero-copy (e.g. by numpy / memoryview). The slice must stay valid while
-    // the buffer is held, so back it with a field of the instance.
+    // Buffer protocol: __buffer__(self) []const u8 exposes a read-only
+    // zero-copy view (numpy / memoryview); __buffer_mut__(self) []u8 a writable
+    // one. The slice must stay valid while the buffer is held, so back it with a
+    // field of the instance.
     const has_buffer = @hasDecl(T, "__buffer__");
+    const has_buffer_mut = @hasDecl(T, "__buffer_mut__");
+    const has_any_buffer = has_buffer or has_buffer_mut;
 
     const is_gc = structHasPyObjectField(T);
     const has_deinit = @hasDecl(T, "__deinit__");
@@ -1188,7 +1194,8 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
-    // bf_getbuffer: expose a read-only contiguous byte view (memoryview/numpy).
+    // bf_getbuffer: expose a contiguous byte view (memoryview/numpy), writable
+    // when the class defines __buffer_mut__, otherwise read-only.
     const BufferWrapper = struct {
         fn getbuffer(exporter: ?*zm.PyObject, view: ?*anyopaque, flags: c_int) callconv(.c) c_int {
             if (view == null) {
@@ -1196,6 +1203,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 return -1;
             }
             const ptr = Cell.ptrFromObj(exporter);
+            if (comptime has_buffer_mut) {
+                const data: []u8 = T.__buffer_mut__(ptr);
+                return zm.PyBuffer_FillInfo(view, exporter, @ptrCast(data.ptr), @as(isize, @intCast(data.len)), 0, flags);
+            }
             const data: []const u8 = T.__buffer__(ptr);
             return zm.PyBuffer_FillInfo(view, exporter, @constCast(@ptrCast(data.ptr)), @as(isize, @intCast(data.len)), 1, flags);
         }
@@ -1315,6 +1326,24 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const ClassGetItemWrapper = struct {
         fn classgetitem(cls: ?*zm.PyObject, item: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
             return zm.pyo3zig_GenericAlias(cls, item);
+        }
+    };
+
+    // __init_subclass__(cls): classmethod (METH_CLASS) fired on subclass
+    // creation. The class-definition keywords (args/kwargs) are ignored; the
+    // hook receives only the new subclass.
+    const InitSubclassWrapper = struct {
+        fn inner(cls: ?*zm.PyObject) ?*zm.PyObject {
+            const fi = @typeInfo(@TypeOf(T.__init_subclass__)).@"fn";
+            return callFuncReturningPyObject(T.__init_subclass__, fi, .{cls});
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn meth(cls: ?*zm.PyObject, args: ?*zm.PyObject, kwargs: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            _ = args;
+            _ = kwargs;
+            return zm.pz_guard(&thunk, @ptrCast(cls));
         }
     };
 
@@ -1577,6 +1606,12 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     .ml_flags = zm.METH_O | METH_CLASS,
                     .ml_doc = null,
                 }};
+                if (has_init_subclass) arr = arr ++ &[_]zm.PyMethodDef{.{
+                    .ml_name = @as(?[*:0]const u8, "__init_subclass__"),
+                    .ml_meth = @ptrCast(&InitSubclassWrapper.meth),
+                    .ml_flags = zm.METH_VARARGS | zm.METH_KEYWORDS | METH_CLASS,
+                    .ml_doc = null,
+                }};
                 break :blk arr;
             };
             const has_any_method = has_methods or auto_methods.len > 0;
@@ -1660,7 +1695,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_setattr) slot_count += 1;
             if (has_descr_get) slot_count += 1;
             if (has_descr_assign) slot_count += 1;
-            if (has_buffer) slot_count += 1;
+            if (has_any_buffer) slot_count += 1;
             if (is_gc) slot_count += 2; // tp_traverse + tp_clear
 
             var slots: [slot_count]zm.PyType_Slot = undefined;
@@ -1903,7 +1938,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                 slots[slot_idx] = .{ .slot = zm.Py_tp_descr_set, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&DescrSetWrapper.descrSet))) };
                 slot_idx += 1;
             }
-            if (has_buffer) {
+            if (has_any_buffer) {
                 slots[slot_idx] = .{ .slot = zm.Py_bf_getbuffer, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&BufferWrapper.getbuffer))) };
                 slot_idx += 1;
             }

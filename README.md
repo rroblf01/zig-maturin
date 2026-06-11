@@ -189,8 +189,10 @@ Register the class in the module's `.classes` field.
   fails) and `__setattr__(self, name, value)` (intercepts every assignment).
 - Descriptors: `__get__(self, obj, objtype)`, `__set__(self, obj, value)`,
   `__delete__(self, obj)` — use an instance as a managed attribute on a class.
-- Buffer: `__buffer__(self)` returns a `[]const u8` exposed zero-copy to
-  `memoryview`/`bytes`/numpy (read-only).
+- Subclass hook: `__init_subclass__(cls)` — fires when a Python subclass is
+  created (`cls` is the new subclass).
+- Buffer: `__buffer__(self) []const u8` (read-only) or `__buffer_mut__(self)
+  []u8` (writable) exposes a zero-copy view to `memoryview`/`bytes`/numpy.
 
 Every class is also subscriptable for type hints — `MyClass[int]` yields a
 `types.GenericAlias` (auto `__class_getitem__`).

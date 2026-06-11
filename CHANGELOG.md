@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-06-10
 
 ### Added
+- **Writable buffer protocol** (`__buffer_mut__(self) []u8`): exposes a
+  mutable zero-copy view, so `memoryview`/numpy can write into the instance
+  (read-only `__buffer__` is unchanged).
+- **`__init_subclass__(cls)`**: an implicit classmethod hook fired whenever a
+  Python subclass is created (registry/validation patterns).
 - **`__dir__`, `__sizeof__`, `__set_name__`**: customize `dir(obj)`,
   `sys.getsizeof(obj)`, and react to being bound as a class attribute.
 - **Descriptor protocol** (`__get__` / `__set__` / `__delete__`): a class can be
