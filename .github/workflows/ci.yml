@@ -204,35 +204,13 @@ jobs:
       - name: Smoke test imported extension
         run: python ci/smoke.py
 
-  # Free-threading (no-GIL, PEP 703): build + import the extension on a
-  # free-threaded interpreter. Proves the module's Py_MOD_GIL_NOT_USED opt-in
-  # works and the extension loads without re-enabling the GIL.
-  free-threaded:
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.13t", "3.14t"]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-      - name: Install zig-maturin
-        run: pip install .
-      - name: Build extension wheel
-        run: zig-maturin build --out dist
-      - name: Verify wheel is tagged free-threaded (cp3Xt)
-        run: ls dist/*-cp3??t-*.whl
-      - name: Install built wheel
-        run: pip install --find-links dist --no-index pyo3zig_demo
-      - name: Smoke test on a free-threaded interpreter
-        run: |
-          python -c "import sys; assert not sys._is_gil_enabled(), 'GIL still enabled'"
-          python ci/smoke.py
+  # NOTE: Free-threading (no-GIL, PEP 703) is NOT supported yet (deferred to a
+  # future release). The C shim opts in with Py_MOD_GIL_NOT_USED, but the
+  # Zig-side PyObject/PyModuleDef layouts are the regular-ABI structs; the
+  # free-threaded build has a wider object header, so the module def and
+  # instance layouts need a free-threaded-conditional definition before the
+  # extension can load on a `python3.13t` / `python3.14t` interpreter. The CI
+  # job is intentionally removed until that lands.
 
   # Sub-interpreters: build + install the extension, then import and exercise it
   # inside (shared-GIL) sub-interpreters. A single-phase module would raise on

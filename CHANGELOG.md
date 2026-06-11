@@ -11,14 +11,6 @@ First stable release. The public Zig API (`pyo3zig`, imported as `pz`) and the
 changes to either wait for a 2.0.
 
 ### Added
-- **Free-threading (no-GIL, PEP 703) support**: extensions declare themselves
-  `Py_MOD_GIL_NOT_USED`, so on a free-threaded interpreter (`python3.13t` /
-  `python3.14t`) they run without forcing the GIL back on process-wide. The
-  shim already uses out-of-line refcounting and per-thread state; the remaining
-  process-lifetime caches (the datetime class, the await-iterator type) are now
-  published with an atomic compare-exchange / `PyMutex` so first-use is race-free
-  without the GIL. Building on a free-threaded interpreter tags the wheel
-  `cp3Xt`. (No-op on regular and Limited-API builds.)
 - **Toolchain-free `pip install`**: when no `zig` is on PATH, the PEP 517 backend
   pulls in the `ziglang` wheel (a pinned Zig binary) automatically and builds via
   `python -m ziglang`, so `pip install .` works with no system toolchain.
@@ -79,6 +71,12 @@ changes to either wait for a 2.0.
   all work in sub-interpreters, and several interpreters coexist.
 
 ### Not yet
+- **Free-threading (no-GIL, PEP 703)**: the C shim opts in with
+  `Py_MOD_GIL_NOT_USED` and the wheel is tagged `cp3Xt`, but the free-threaded
+  interpreter has a wider `PyObject` header (32 bytes vs 16), so the Zig-side
+  `PyModuleDef` / instance layouts — currently the regular-ABI structs — must be
+  given a free-threaded-conditional definition before the extension can load on
+  `python3.13t` / `python3.14t`. Regular (with-GIL) builds are unaffected.
 - **Per-interpreter GIL** (`Py_MOD_PER_INTERPRETER_GIL_SUPPORTED`, true parallel
   interpreters): the per-interpreter caches are serialized by the shared GIL; the
   own-GIL mode would need them lock-protected. Shared-GIL sub-interpreters are

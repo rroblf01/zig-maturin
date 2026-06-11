@@ -153,14 +153,13 @@ inline macros), so abi3 adds ~no runtime overhead here. Managed `__dict__` and
 weakref need the GC pre-header and are unavailable under abi3 (cyclic GC of
 `?*pz.PyObject` fields still works).
 
-### Free-threading (no-GIL, PEP 703)
+### Free-threading (no-GIL, PEP 703) — not yet
 
-Extensions declare themselves `Py_MOD_GIL_NOT_USED`, so on a free-threaded
-interpreter (`python3.13t` / `python3.14t`) they run without forcing the GIL
-back on. Building on a free-threaded interpreter tags the wheel `cp3Xt`
-automatically — nothing to configure. The shim uses out-of-line refcounting and
-per-thread state, and its process-lifetime caches are published with atomic
-compare-exchange / `PyMutex`, so it is free-threading clean.
+Free-threaded interpreters (`python3.13t` / `python3.14t`) are **not supported
+yet**. The C shim already opts in (`Py_MOD_GIL_NOT_USED`) and is refcount-clean,
+but a free-threaded build has a wider `PyObject` header, so the Zig-side module
+and instance layouts need a free-threaded-specific definition before the
+extension can load there. Regular (with-GIL) CPython is fully supported.
 
 ### Sub-interpreters
 
@@ -615,7 +614,7 @@ zig-source  = "src/main.zig"
 
 ## Requirements
 
-- Python 3.12+ (including free-threaded `3.13t` / `3.14t`)
+- Python 3.12+ (free-threaded `3.13t` / `3.14t` not supported yet)
 - Zig 0.16 — on PATH, or pulled in automatically as the `ziglang` wheel
 - Linux, macOS, or Windows
 
