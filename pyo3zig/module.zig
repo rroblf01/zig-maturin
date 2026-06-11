@@ -37,7 +37,7 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
             .m_slots = @ptrCast(&mp_slots),
             .m_traverse = null,
             .m_clear = null,
-            .m_free = null,
+            .m_free = @constCast(@ptrCast(&freeModule)),
         };
         // Single-phase def, used only when this module is nested as a submodule
         // (created inline inside the parent's exec, not via PyInit_).
@@ -50,7 +50,7 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
             .m_slots = null,
             .m_traverse = null,
             .m_clear = null,
-            .m_free = null,
+            .m_free = @constCast(@ptrCast(&freeModule)),
         };
 
         /// Populate a freshly-created module object: classes, constants,
@@ -121,6 +121,20 @@ pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
         /// Py_mod_exec hook (multi-phase): populate the module CPython created.
         fn exec(module: ?*zm.PyObject) callconv(.c) c_int {
             return populate(module);
+        }
+
+        /// m_free hook: when this module is torn down (notably when a
+        /// sub-interpreter is destroyed), drop this interpreter's entries from
+        /// every per-interpreter cache. Otherwise a freed interpreter would leave
+        /// stale type pointers that a later interpreter reusing the same
+        /// PyInterpreterState address could read as live objects (use-after-free).
+        fn freeModule(_: ?*anyopaque) callconv(.c) void {
+            const classes: []const type = if (@hasField(@TypeOf(config), "classes")) config.classes else &.{};
+            inline for (classes) |cls| {
+                if (@hasDecl(cls, "clearTypeCache")) cls.clearTypeCache();
+            }
+            @import("datetime.zig").clearCache();
+            zm.pyo3zig_clear_awaitable_cache();
         }
 
         /// PyInit_<name>: returns the module def for multi-phase initialization.

@@ -27,5 +27,15 @@ pub fn Cache(comptime N: usize) type {
             }
             self.entries[0] = .{ .interp = cur, .obj = o };
         }
+
+        /// Drop the current interpreter's entry. Called on module teardown so a
+        /// destroyed interpreter leaves no stale pointer behind (which a later
+        /// interpreter reusing the same address would read as a live object).
+        pub fn clear(self: *@This()) void {
+            const cur = zm.PyInterpreterState_Get();
+            for (&self.entries) |*e| {
+                if (e.interp == cur) e.* = .{};
+            }
+        }
     };
 }

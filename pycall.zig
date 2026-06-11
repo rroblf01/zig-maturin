@@ -87,6 +87,8 @@ pub extern fn pyo3zig_get_await_iter(?*PyObject) callconv(.c) ?*PyObject;
 // Declare a single-phase module free-threading safe (Py_MOD_GIL_NOT_USED).
 // No-op on regular/Limited-API builds.
 pub extern fn pyo3zig_module_declare_no_gil(?*PyObject) callconv(.c) void;
+// Drop the current interpreter's cached awaitable type (module teardown).
+pub extern fn pyo3zig_clear_awaitable_cache() callconv(.c) void;
 // types.GenericAlias for __class_getitem__ (MyClass[int] in type hints).
 pub extern fn pyo3zig_GenericAlias(?*PyObject, ?*PyObject) callconv(.c) ?*PyObject;
 // Managed __dict__ traverse/clear (for GC classes with arbitrary attributes).

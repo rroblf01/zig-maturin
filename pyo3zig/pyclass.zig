@@ -480,6 +480,14 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             // Table full (16+ live interpreters): reuse the first slot.
             entries[0] = .{ .interp = cur, .obj = o };
         }
+        // Drop the current interpreter's entry on module teardown (avoids a stale
+        // pointer that a later interpreter reusing the address would misread).
+        fn clear() void {
+            const cur = zm.PyInterpreterState_Get();
+            for (&entries) |*e| {
+                if (e.interp == cur) e.* = .{};
+            }
+        }
     };
 
     // tp_finalize: runs once before deallocation (CPython saves/restores any
@@ -2083,6 +2091,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         pub fn class_name() [*:0]const u8 {
             return type_name;
         }
+        /// Drop this class's cached type for the current interpreter (module
+        /// teardown). Keeps the per-interpreter cache free of stale pointers.
+        pub fn clearTypeCache() void {
+            TypeRef.clear();
+        }
     };
 }
 
@@ -2168,6 +2181,10 @@ pub fn exceptionClass(comptime qualified_name: [:0]const u8, comptime base_fn: a
         /// Raise this exception with a message (sets the Python error indicator).
         pub fn raise(msg: [*:0]const u8) void {
             zm.PyErr_SetString(cache.get() orelse zm.PyExc_Exception(), msg);
+        }
+        /// Drop this interpreter's cached exception type (module teardown).
+        pub fn clearTypeCache() void {
+            cache.clear();
         }
     };
 }

@@ -30,6 +30,14 @@ fn datetimeClass() ?*zm.PyObject {
     return cls;
 }
 
+/// Drop the current interpreter's cached datetime class (module teardown). We
+/// own this reference (from PyObject_GetAttrString), so release it before
+/// clearing — otherwise each torn-down interpreter leaks one class reference.
+pub fn clearCache() void {
+    if (dt_cache.get()) |c| zm.Py_XDECREF(c);
+    dt_cache.clear();
+}
+
 fn intAttr(obj: ?*zm.PyObject, name: [*:0]const u8) ?i64 {
     const a = zm.PyObject_GetAttrString(obj, name) orelse return null;
     defer zm.Py_XDECREF(a);

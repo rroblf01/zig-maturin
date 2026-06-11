@@ -343,6 +343,74 @@ for _ in range(5000):
     del _d
 check("DeinitTracker: every instance finalized", m.get_deinit_count() - _n0 == 5000)
 
+# test_no_leaks_new_features (refcount stability for the 1.0 conversions/paths;
+# the 20k iterations also let the Valgrind gate catch a scaling C-level leak).
+# dict -> HashMap: the dict's key and value objects must not be over-retained.
+_kobj = "leakkey"
+_vobj = 123456789  # a distinct int object
+_dct = {_kobj: _vobj}
+_kb, _vb = sys.getrefcount(_kobj), sys.getrefcount(_vobj)
+for _ in range(20000):
+    m.dict_sum({"a": 1, "b": 2})
+    m.lookup_zero({0: 7, 1: 8})
+check("dict->HashMap: key refcount stable", sys.getrefcount(_kobj) == _kb)
+check("dict->HashMap: value refcount stable", sys.getrefcount(_vobj) == _vb)
+del _dct
+
+# set output: returned sets must be fully owned by the caller (and freeable).
+for _ in range(20000):
+    _st = m.unique_bytes(b"abcabc")
+    del _st
+gc.collect()
+check("set output: no growth", True)
+
+# complex round-trip.
+for _ in range(20000):
+    m.cmul(complex(1, 2), complex(3, 4))
+check("complex: no leak (stress)", True)
+
+# variadic: the passed objects are borrowed, never over-retained.
+_va = object()
+_vab = sys.getrefcount(_va)
+for _ in range(20000):
+    m.sum_all(1, 2, 3)
+check("variadic: arg tuple borrowed (no leak)", sys.getrefcount(_va) == _vab)
+
+# custom exception raise + catch loop must not leak the exception/type.
+for _ in range(20000):
+    try:
+        m.check_positive(-1)
+    except m.DemoError:
+        pass
+check("custom exception: raise/catch no leak", True)
+
+# os.PathLike argument: the fspath result is copied into the call arena and
+# released; the path object's refcount must stay stable. Exercise the error
+# path too (non-path-like -> TypeError, with PyErr_Clear).
+import pathlib as _pl  # noqa: E402
+
+_p = _pl.PurePath("/tmp/leak")
+_pb = sys.getrefcount(_p)
+for _ in range(20000):
+    m.greet(_p)
+    try:
+        m.greet(12345)  # not path-like -> TypeError (error path must not leak)
+    except TypeError:
+        pass
+check("pathlike: path arg refcount stable", sys.getrefcount(_p) == _pb)
+
+# inheritance: create/destroy many derived instances + Python subclasses.
+class _Pup(m.Dog):
+    pass
+
+
+for _ in range(20000):
+    _d = m.Dog(4, True)
+    _q = _Pup(3, False)
+    del _d, _q
+gc.collect()
+check("inheritance: instance churn no crash/leak", True)
+
 # test_kwargs_and_defaults
 check("power default exp", m.power(3) == 9)
 check("power positional", m.power(2, 10) == 1024)
@@ -694,6 +762,38 @@ check("Path argument coerced", m.greet(pathlib.PurePath("/tmp/x")) == "Hello, /t
 check("variadic no args", m.sum_all() == 0)
 check("variadic positional", m.sum_all(1, 2, 3) == 6)
 check("variadic with kwarg bonus", m.sum_all(1, 2, bonus=10) == 13)
+
+# test_edge_cases (boundary inputs for the 1.0 features)
+# dict <-> HashMap edges
+check("empty dict -> HashMap sum", m.dict_sum({}) == 0)
+check("empty dict -> AutoHashMap miss", m.lookup_zero({}) == -1)
+check("large dict -> HashMap", m.dict_sum({str(i): i for i in range(1000)}) == sum(range(1000)))
+check("AutoHashMap negative key value", m.lookup_zero({0: -5, 2: 9}) == -5)
+try:
+    m.lookup_zero({"notint": 1})
+    check("AutoHashMap non-int key errors", False, "no exception")
+except TypeError:
+    check("AutoHashMap non-int key errors", True)
+# set output edges
+check("set output empty", m.unique_bytes(b"") == set())
+check("set output single", m.unique_bytes(b"\x00") == {0})
+check("set output full byte range", m.unique_bytes(bytes(range(256))) == set(range(256)))
+# complex edges
+check("complex zero", m.cmul(complex(0, 0), complex(1, 1)) == 0)
+check("complex negative", m.cmul(complex(-1, -1), complex(1, 0)) == complex(-1, -1))
+check("complex from bool (int subclass)", m.cmul(True, complex(2, 0)) == complex(2, 0))
+# variadic edges
+check("variadic kwargs only", m.sum_all(bonus=5) == 5)
+check("variadic many args", m.sum_all(*range(100)) == sum(range(100)))
+# pathlike edges
+check("Path via concrete Path", m.greet(pathlib.Path("/a/b")) == "Hello, /a/b!")
+check("str still works (not coerced)", m.greet("plain") == "Hello, plain!")
+check("bytes still works", m.greet(b"raw") == "Hello, raw!")
+# inheritance edges
+_d2 = m.Dog(0, False)
+check("derived zero field", _d2.legs_count() == 0 and _d2.bark() is False)
+check("derived not same as base instance", not isinstance(m.Animal(1), m.Dog))
+check("custom exception catchable as Exception", issubclass(m.DemoError, Exception))
 
 # test_call_kwargs
 adder = m.Adder(10)

@@ -195,6 +195,7 @@ pub const pyo3zig_make_ready_awaitable = pycall.pyo3zig_make_ready_awaitable;
 pub const pyo3zig_make_stop_async_awaitable = pycall.pyo3zig_make_stop_async_awaitable;
 pub const pyo3zig_get_await_iter = pycall.pyo3zig_get_await_iter;
 pub const pyo3zig_module_declare_no_gil = pycall.pyo3zig_module_declare_no_gil;
+pub const pyo3zig_clear_awaitable_cache = pycall.pyo3zig_clear_awaitable_cache;
 pub const pyo3zig_GenericAlias = pycall.pyo3zig_GenericAlias;
 pub const pyo3zig_VisitManagedDict = pycall.pyo3zig_VisitManagedDict;
 pub const pyo3zig_ClearManagedDict = pycall.pyo3zig_ClearManagedDict;

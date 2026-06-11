@@ -85,6 +85,18 @@ jobs:
             python3 tests/test_pyo3zig.py
       - name: Check for extension leaks
         run: python3 ci/check_leaks.py valgrind.log
+      - name: Run sub-interpreter test under Valgrind (two interpreter counts)
+        env:
+          PYTHONMALLOC: malloc
+        run: |
+          sed 's/range(100)/range(10)/' tests/test_subinterp.py > si_small.py
+          sed 's/range(100)/range(80)/' tests/test_subinterp.py > si_big.py
+          valgrind --leak-check=full --show-leak-kinds=definite,indirect --num-callers=20 \
+            --log-file=vg_si_small.log python3 si_small.py
+          valgrind --leak-check=full --show-leak-kinds=definite,indirect --num-callers=20 \
+            --log-file=vg_si_big.log python3 si_big.py
+      - name: Check sub-interpreter leak does not scale
+        run: python3 ci/check_leaks.py --scaling vg_si_small.log vg_si_big.log 10 80
 
   # Pure-Python tooling tests (CLI, config, wheel, builder) across every
   # supported OS and Python version. No Zig needed.

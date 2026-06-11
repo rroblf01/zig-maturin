@@ -80,6 +80,22 @@ static PyObject* pzra_get_type(void) {
     return t;
 }
 
+/* Drop the current interpreter's awaitable type on module teardown, so a later
+ * interpreter reusing the freed PyInterpreterState address never reads a stale
+ * type pointer. */
+void pyo3zig_clear_awaitable_cache(void) {
+    PyInterpreterState* cur = PyInterpreterState_Get();
+    for (int i = 0; i < 16; i++) {
+        if (pzra_entries[i].interp == cur) {
+            /* We own this type (PyType_FromSpec); release it so a torn-down
+             * interpreter doesn't leak its awaitable type. */
+            Py_XDECREF(pzra_entries[i].type);
+            pzra_entries[i].interp = NULL;
+            pzra_entries[i].type = NULL;
+        }
+    }
+}
+
 static PyObject* pzra_new(PyObject* value, int is_stop) {
     PyObject* pzra_type = pzra_get_type();
     if (!pzra_type) return NULL;

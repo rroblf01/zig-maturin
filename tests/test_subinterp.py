@@ -87,6 +87,26 @@ except m.DemoError:
             except Exception:
                 pass
 
+    # Stress the per-interpreter cache lifetime: create + destroy many more
+    # interpreters than the cache size (16). Each teardown must drop its cache
+    # entries, or a later interpreter reusing a freed PyInterpreterState address
+    # reads a stale type pointer and segfaults.
+    cycle_code = (
+        "import sys; sys.path.insert(0, {p!r})\n"
+        "import pyo3zig_demo as m\n"
+        "assert m.Dog(4, True).legs_count() == 4\n"
+        "assert (m.Vec2(1, 2) + m.Vec2(3, 4)).x == 4\n"
+        "assert m.make_dt(2026, 6, 11).year == 2026\n"
+    ).format(p=path0)
+    crashed = False
+    for _ in range(100):
+        i = _interpreters.create("legacy")
+        try:
+            _interpreters.run_string(i, cycle_code)
+        finally:
+            _interpreters.destroy(i)
+    check("100 create/destroy cycles (no stale-cache crash)", not crashed)
+
     # The main interpreter still works after sub-interpreters came and went.
     check("main interpreter intact afterwards", m.Greeter(9) == m.Greeter(9))
 
