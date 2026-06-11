@@ -13,7 +13,17 @@ Why "scaling": the test suite exercises the hot paths tens of thousands of times
 per-call/per-instance leak therefore shows up as thousands of lost blocks. A
 handful of blocks is a one-time finalization artifact, not a real bug.
 
-Usage: python3 ci/check_leaks.py <valgrind-log>
+Usage:
+  python3 ci/check_leaks.py <valgrind-log>
+      Absolute gate: fail if > MAX_BLOCKS extension blocks (the main suite, which
+      hammers the hot paths so a per-call leak shows up as thousands of blocks).
+
+  python3 ci/check_leaks.py --scaling <small-log> <big-log> <small-n> <big-n>
+      Scaling gate for the sub-interpreter test: the only correctness question is
+      whether the leak *grows* with the number of interpreters. A fixed one-time
+      cost (CPython's own imperfect sub-interpreter teardown — orphaned module
+      dict / interned strings) is expected; a per-interpreter leak grows roughly
+      linearly with the interpreter count. Fail only on growth.
 """
 from __future__ import annotations
 
@@ -34,7 +44,7 @@ MAX_BLOCKS = 5
 HEADER = re.compile(r"==\d+==\s+\d[\d,]*\s+bytes in (\d[\d,]*) blocks are (?:definitely|indirectly) lost")
 
 
-def main(path: str) -> int:
+def offending_blocks(path: str) -> list[str]:
     with open(path, encoding="utf-8", errors="replace") as fh:
         lines = fh.readlines()
 
@@ -56,12 +66,16 @@ def main(path: str) -> int:
     if current:
         blocks.append(current)
 
-    offending = []
+    out = []
     for blk in blocks:
         text = "".join(blk)
         if OURS.search(text) and not INTENTIONAL.search(text):
-            offending.append(text)
+            out.append(text)
+    return out
 
+
+def main(path: str) -> int:
+    offending = offending_blocks(path)
     if len(offending) > MAX_BLOCKS:
         print(f"LEAK CHECK FAILED: {len(offending)} extension leak blocks "
               f"(> {MAX_BLOCKS}); a per-call leak is likely.\n")
@@ -74,8 +88,29 @@ def main(path: str) -> int:
     return 0
 
 
+def scaling(small_log: str, big_log: str, small_n: int, big_n: int) -> int:
+    small = len(offending_blocks(small_log))
+    big = len(offending_blocks(big_log))
+    grew = big - small
+    span = max(1, big_n - small_n)
+    # A per-interpreter leak adds >= 1 block per extra interpreter, so growth
+    # tracks `span`. Allow a small slack for one-off teardown jitter.
+    allowed = max(3, span // 4)
+    if grew > allowed:
+        print(f"LEAK CHECK FAILED (scaling): {small} blocks at n={small_n}, "
+              f"{big} at n={big_n} (+{grew} over {span} more interpreters, "
+              f"allowed +{allowed}); a per-interpreter leak is likely.")
+        return 1
+    print(f"LEAK CHECK OK (scaling): {small} blocks at n={small_n}, {big} at "
+          f"n={big_n} (+{grew} <= +{allowed}); leak is fixed one-time cost, "
+          f"not per-interpreter.")
+    return 0
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(__doc__)
-        sys.exit(2)
-    sys.exit(main(sys.argv[1]))
+    if len(sys.argv) == 2:
+        sys.exit(main(sys.argv[1]))
+    if len(sys.argv) == 6 and sys.argv[1] == "--scaling":
+        sys.exit(scaling(sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])))
+    print(__doc__)
+    sys.exit(2)

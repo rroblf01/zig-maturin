@@ -85,6 +85,18 @@ jobs:
             python3 tests/test_pyo3zig.py
       - name: Check for extension leaks
         run: python3 ci/check_leaks.py valgrind.log
+      - name: Run sub-interpreter test under Valgrind (two interpreter counts)
+        env:
+          PYTHONMALLOC: malloc
+        run: |
+          sed 's/range(100)/range(10)/' tests/test_subinterp.py > si_small.py
+          sed 's/range(100)/range(80)/' tests/test_subinterp.py > si_big.py
+          valgrind --leak-check=full --show-leak-kinds=definite,indirect --num-callers=20 \
+            --log-file=vg_si_small.log python3 si_small.py
+          valgrind --leak-check=full --show-leak-kinds=definite,indirect --num-callers=20 \
+            --log-file=vg_si_big.log python3 si_big.py
+      - name: Check sub-interpreter leak does not scale
+        run: python3 ci/check_leaks.py --scaling vg_si_small.log vg_si_big.log 10 80
 
   # Pure-Python tooling tests (CLI, config, wheel, builder) across every
   # supported OS and Python version. No Zig needed.
@@ -191,6 +203,107 @@ jobs:
         run: pip install --find-links dist --no-index pyo3zig_demo
       - name: Smoke test imported extension
         run: python ci/smoke.py
+
+  # NOTE: Free-threading (no-GIL, PEP 703) is NOT supported yet (deferred to a
+  # future release). The C shim opts in with Py_MOD_GIL_NOT_USED, but the
+  # Zig-side PyObject/PyModuleDef layouts are the regular-ABI structs; the
+  # free-threaded build has a wider object header, so the module def and
+  # instance layouts need a free-threaded-conditional definition before the
+  # extension can load on a `python3.13t` / `python3.14t` interpreter. The CI
+  # job is intentionally removed until that lands.
+
+  # Sub-interpreters: build + install the extension, then import and exercise it
+  # inside (shared-GIL) sub-interpreters. A single-phase module would raise on
+  # import here, so a passing run proves the multi-phase init + per-interpreter
+  # type caches work. Needs CPython 3.13+ for the `_interpreters` API.
+  subinterpreters:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Install zig-maturin
+        run: pip install .
+      - name: Build + install the extension
+        run: |
+          zig-maturin build --out dist
+          pip install --find-links dist --no-index pyo3zig_demo
+      - name: Run sub-interpreter E2E
+        run: python tests/test_subinterp.py
+
+  # Toolchain-free build: no `zig` on PATH (the runner has none and we add no
+  # setup-zig step). The CLI must fall back to the `ziglang` wheel and still
+  # produce a working extension — the path a bare `pip install .` takes.
+  toolchain-free-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install zig-maturin + ziglang (no system Zig)
+        run: pip install . "ziglang>=0.16.0,<0.17.0"
+      - name: Assert no system zig
+        run: 'which zig && exit 1 || echo "no system zig, as expected"'
+      - name: Build via the ziglang fallback
+        run: zig-maturin build --out dist
+      - name: Install + smoke test
+        run: |
+          pip install --find-links dist --no-index pyo3zig_demo
+          python ci/smoke.py
+
+  # End-to-end exercise of the 1.0 packaging features that unit tests only cover
+  # in part: mixed Python/Zig layout, PEP 660 editable installs, and the
+  # generate-ci workflow generator.
+  packaging-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Install zig-maturin
+        run: pip install . pyyaml
+
+      - name: generate-ci produces valid YAML
+        run: |
+          zig-maturin generate-ci --print > wheels.yml
+          python -c "import yaml; d=yaml.safe_load(open('wheels.yml')); assert set(d['jobs'])=={'wheels','sdist','publish'}, d['jobs']"
+
+      - name: Mixed Python/Zig layout (package + nested extension)
+        run: |
+          # Turning src/<module>/ into a package switches the build to mixed
+          # layout: the extension nests inside it and the .py files ride along.
+          mkdir -p src/pyo3zig_demo
+          printf 'from .pyo3zig_demo import *\nfrom .companion import tag\n' > src/pyo3zig_demo/__init__.py
+          printf 'def tag():\n    return "companion-ok"\n' > src/pyo3zig_demo/companion.py
+          zig-maturin build --out dist_mixed
+          python -c "import zipfile,glob; n=zipfile.ZipFile(glob.glob('dist_mixed/*.whl')[0]).namelist(); assert 'pyo3zig_demo/pyo3zig_demo.so' in n and 'pyo3zig_demo/companion.py' in n, n"
+          pip install --find-links dist_mixed --no-index --force-reinstall pyo3zig_demo
+          python -c "import pyo3zig_demo as m; assert m.hello().startswith('Hello'); assert m.tag()=='companion-ok'; assert m.mathx.triple(2)==6"
+
+      - name: Editable install (PEP 660 build_editable)
+        run: |
+          python - <<'PY'
+          import os, sys, glob, subprocess, tempfile
+          from zig_maturin import buildapi
+          d = tempfile.mkdtemp()
+          name = buildapi.build_editable(d)
+          subprocess.check_call([sys.executable, "-m", "pip", "install",
+                                 "--force-reinstall", os.path.join(d, name)])
+          PY
+          python -c "import pyo3zig_demo as m; print('editable import ok:', m.hello())"
 
   # Windows/ARM64 wheel, cross-compiled from a Linux x86_64 runner: zig.exe
   # segfaults when run natively on a Windows/ARM host, and an x86_64 host

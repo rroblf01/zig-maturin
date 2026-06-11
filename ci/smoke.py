@@ -21,4 +21,13 @@ assert g != m.Greeter(9)
 assert (g != m.Greeter(7)) is False, "richcompare NE must honor op"
 assert str(g) == "Greeter(val=7)", str(g)
 
+# Nested submodule: attribute access and dotted import.
+import importlib  # noqa: E402
+
+assert m.mathx.triple(4) == 12, m.mathx.triple(4)
+assert importlib.import_module("pyo3zig_demo.mathx").triple(3) == 9
+
+# complex round-trip (std.math.Complex <-> Python complex).
+assert m.cmul(complex(1, 2), complex(3, 4)) == complex(-5, 10)
+
 print(f"smoke OK on {platform.platform()} / Python {platform.python_version()}")

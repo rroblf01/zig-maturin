@@ -84,6 +84,36 @@ def sdist(out):
     build_sdist(config, out)
 
 
+@main.command(name="generate-ci")
+@click.option(
+    "--out",
+    default=".github/workflows/wheels.yml",
+    help="Where to write the workflow (default: .github/workflows/wheels.yml)",
+)
+@click.option(
+    "--print",
+    "to_stdout",
+    is_flag=True,
+    default=False,
+    help="Print to stdout instead of writing a file",
+)
+def generate_ci(out, to_stdout):
+    """Generate a GitHub Actions workflow that builds + publishes wheels."""
+    from pathlib import Path
+
+    from .ci_template import generate_wheels_workflow
+
+    config = read_config()
+    content = generate_wheels_workflow(config.module_path)
+    if to_stdout:
+        click.echo(content)
+        return
+    dest = Path(out)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(content)
+    click.echo(f"Wrote {dest}")
+
+
 @main.command()
 @click.option(
     "--target",

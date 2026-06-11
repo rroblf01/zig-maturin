@@ -181,6 +181,40 @@ pub fn pyFnKw(comptime name: [:0]const u8, comptime func: anytype, comptime spec
     };
 }
 
+/// Register a variadic function that receives the raw argument tuple and keyword
+/// dict, for `*args` / `**kwargs` handling. The function takes two
+/// `?*zm.PyObject` parameters (args tuple, kwargs dict; kwargs may be null) and
+/// returns anything convertible (or `!T`, or `?*zm.PyObject` for full control):
+///
+///     fn sum_all(args: ?*pz.PyObject, kwargs: ?*pz.PyObject) !i64 { ... }
+///     pz.pyFnRaw("sum_all", sum_all);
+pub fn pyFnRaw(comptime name: [:0]const u8, comptime func: anytype) zm.PyMethodDef {
+    const fn_info = @typeInfo(@TypeOf(func)).@"fn";
+    if (fn_info.params.len != 2) {
+        @compileError("pyFnRaw: function must take (args: ?*PyObject, kwargs: ?*PyObject)");
+    }
+
+    const Wrapper = struct {
+        const Ctx = struct { args: ?*zm.PyObject, kwargs: ?*zm.PyObject };
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            const c = @as(*Ctx, @ptrCast(@alignCast(p)));
+            return callAndConvert(func, fn_info, .{ c.args, c.kwargs });
+        }
+        pub fn trampoline(self: ?*zm.PyObject, args_obj: ?*zm.PyObject, kwargs_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            _ = self;
+            var ctx = Ctx{ .args = args_obj, .kwargs = kwargs_obj };
+            return zm.pz_guard(&thunk, &ctx);
+        }
+    };
+
+    return zm.PyMethodDef{
+        .ml_name = name,
+        .ml_meth = @ptrCast(&Wrapper.trampoline),
+        .ml_flags = zm.METH_VARARGS | zm.METH_KEYWORDS,
+        .ml_doc = null,
+    };
+}
+
 /// Bind Python positional + keyword arguments to a Zig call-args tuple, using
 /// the explicit names in `spec.args` and optional `spec.defaults`. Returns null
 /// with a Python exception set on error. Shared by pyFnKw, wrapMethodKw, and

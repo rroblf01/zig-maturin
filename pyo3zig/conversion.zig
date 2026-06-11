@@ -12,9 +12,24 @@ pub const ConversionError = error{
     NotImplemented,
 };
 
+/// True for Zig's std.math.Complex(f64)/Complex(f32), which map to Python complex.
+fn isComplex(comptime T: type) bool {
+    return T == std.math.Complex(f64) or T == std.math.Complex(f32);
+}
+
+/// True for a managed `std.HashMap` (incl. StringHashMap / AutoHashMap), which
+/// maps to/from a Python `dict`. Detected structurally so it is matched before
+/// the generic struct→dict branch.
+fn isHashMap(comptime T: type) bool {
+    if (@typeInfo(T) != .@"struct") return false;
+    return @hasDecl(T, "KV") and @hasField(T, "unmanaged") and @hasField(T, "allocator");
+}
+
 /// Python type-hint spelling for a Zig type, used in error messages.
 fn expectedName(comptime T: type) []const u8 {
     if (T == ?*zm.PyObject or T == *zm.PyObject) return "object";
+    if (comptime isComplex(T)) return "complex";
+    if (comptime isHashMap(T)) return "dict";
     return switch (@typeInfo(T)) {
         .int => "int",
         .float => "float",
@@ -89,6 +104,22 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
         return value;
     }
     if (T == datetime.DateTime) return datetime.toPy(value);
+    if (comptime isComplex(T)) {
+        return zm.PyComplex_FromDoubles(@floatCast(value.re), @floatCast(value.im));
+    }
+    if (comptime isHashMap(T)) {
+        const dict = zm.PyDict_New() orelse return error.MemoryError;
+        errdefer zm.Py_XDECREF(dict);
+        var it = value.iterator();
+        while (it.next()) |entry| {
+            const k = try toPyObject(entry.key_ptr.*);
+            defer zm.Py_XDECREF(k);
+            const v = try toPyObject(entry.value_ptr.*);
+            defer zm.Py_XDECREF(v);
+            if (zm.PyDict_SetItem(dict, k, v) != 0) return error.PythonValueError;
+        }
+        return dict;
+    }
     switch (@typeInfo(T)) {
         .int => {
             const info = @typeInfo(T).int;
@@ -233,6 +264,44 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
 
     if (T == datetime.DateTime) return datetime.fromPy(obj) orelse error.PythonTypeError;
 
+    if (comptime isComplex(T)) {
+        // Accepts complex, or any int/float (imag part 0), matching Python's
+        // own complex() coercion. PyComplex_RealAsDouble sets an error on a
+        // non-number and returns -1.0.
+        const re = zm.PyComplex_RealAsDouble(obj);
+        if (re == -1.0 and zm.PyErr_Occurred() != null) {
+            zm.PyErr_Clear();
+            raiseTypeError(T, obj);
+            return error.PythonTypeError;
+        }
+        const Elem = @TypeOf(@as(T, undefined).re);
+        return T{
+            .re = @as(Elem, @floatCast(re)),
+            .im = @as(Elem, @floatCast(zm.PyComplex_ImagAsDouble(obj))),
+        };
+    }
+
+    if (comptime isHashMap(T)) {
+        if (zm.PyDict_Check(obj) == 0) {
+            raiseTypeError(T, obj);
+            return error.PythonTypeError;
+        }
+        const K = @FieldType(T.KV, "key");
+        const V = @FieldType(T.KV, "value");
+        // Backed by the per-call arena: the map lives for the duration of the
+        // call (which is all an argument needs).
+        var map = T.init(allocator);
+        var pos: isize = 0;
+        var key: ?*zm.PyObject = null;
+        var val: ?*zm.PyObject = null;
+        while (zm.PyDict_Next(obj, &pos, &key, &val) != 0) {
+            const k = try fromPyObject(K, key, allocator);
+            const v = try fromPyObject(V, val, allocator);
+            map.put(k, v) catch return error.MemoryError;
+        }
+        return map;
+    }
+
     switch (@typeInfo(T)) {
         .int => |info| {
             if (info.signedness == .signed) {
@@ -320,6 +389,24 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
                         const size = zm.PyByteArray_Size(obj);
                         return buf[0..@as(usize, @intCast(size))];
                     }
+                    // os.PathLike (e.g. pathlib.Path): coerce via os.fspath. The
+                    // result is a fresh object, so copy its bytes into the call
+                    // arena (the borrowed-buffer approach would dangle once we
+                    // drop our reference).
+                    if (zm.PyOS_FSPath(obj)) |path_obj| {
+                        defer zm.Py_XDECREF(path_obj);
+                        const src: []const u8 = if (zm.PyUnicode_Check(path_obj) != 0) blk: {
+                            const c = zm.PyUnicode_AsUTF8(path_obj) orelse return error.PythonValueError;
+                            break :blk std.mem.sliceTo(c, 0);
+                        } else blk: {
+                            var b: [*]u8 = undefined;
+                            var n: isize = undefined;
+                            if (zm.PyBytes_AsStringAndSize(path_obj, &b, &n) != 0) return error.PythonValueError;
+                            break :blk b[0..@as(usize, @intCast(n))];
+                        };
+                        return allocator.dupe(u8, src) catch return error.MemoryError;
+                    }
+                    zm.PyErr_Clear(); // discard fspath's TypeError; raise our own
                     raiseTypeError(T, obj);
                     return error.PythonTypeError;
                 }

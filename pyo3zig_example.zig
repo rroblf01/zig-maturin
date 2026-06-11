@@ -543,6 +543,104 @@ fn next_day(dt: pz.DateTime) pz.DateTime {
     return d;
 }
 
+// Complex numbers cross the boundary as Python `complex` (std.math.Complex).
+fn cmul(a: std.math.Complex(f64), b: std.math.Complex(f64)) std.math.Complex(f64) {
+    return a.mul(b);
+}
+
+// A custom exception type (subclass of ValueError), registered in the module
+// and raisable from Zig.
+const DemoError = pz.exceptionClass("pyo3zig_demo.DemoError", pz.PyExc_ValueError);
+
+// Raises DemoError when n is negative. `raise` sets the error indicator to the
+// custom type; returning an error then propagates that already-set exception
+// (the framework respects an indicator that is already set).
+fn check_positive(n: i64) !i64 {
+    if (n < 0) {
+        DemoError.raise("value must be non-negative");
+        return error.Negative;
+    }
+    return n;
+}
+
+// dict -> std.StringHashMap argument: sum all values (the map is backed by the
+// per-call arena, freed automatically after the call).
+fn dict_sum(m: std.StringHashMap(i64)) i64 {
+    var total: i64 = 0;
+    var it = m.iterator();
+    while (it.next()) |e| total += e.value_ptr.*;
+    return total;
+}
+
+// dict -> std.AutoHashMap (int keys): return the value at key 0, or -1.
+fn lookup_zero(m: std.AutoHashMap(i64, i64)) i64 {
+    return m.get(0) orelse -1;
+}
+
+// Returns a Python set of the distinct byte values in `data`.
+fn unique_bytes(data: []const u8) !pz.PySet {
+    var set = try pz.PySet.new();
+    for (data) |b| {
+        const item = pz.PyLong_FromLongLong(@intCast(b)) orelse return error.PythonError;
+        defer pz.Py_XDECREF(item);
+        try set.add(item);
+    }
+    return set;
+}
+
+// Variadic: sums every positional argument, plus a "bonus" keyword if present.
+fn sum_all(args: ?*pz.PyObject, kwargs: ?*pz.PyObject) i64 {
+    var total: i64 = 0;
+    const n = pz.PyTuple_Size(args);
+    var i: isize = 0;
+    while (i < n) : (i += 1) {
+        total += pz.PyLong_AsLongLong(pz.PyTuple_GetItem(args, i));
+    }
+    if (kwargs) |kw| {
+        if (pz.PyDict_GetItemString(kw, "bonus")) |b| {
+            total += pz.PyLong_AsLongLong(b);
+        }
+    }
+    return total;
+}
+
+// Zig-class inheritance: Dog inherits from Animal. The base struct is embedded
+// as the first field, so Animal's inherited methods/field accessors read the
+// same memory on a Dog instance.
+const Animal = extern struct {
+    legs: i64,
+    pub fn init(legs: i64) Animal {
+        return .{ .legs = legs };
+    }
+};
+fn animal_legs(self: *Animal) i64 {
+    return self.legs;
+}
+const AnimalClass = pz.PyClass(Animal, .{
+    .init_args = &.{"legs"},
+    .methods = &[_]pz.PyMethodDef{
+        pz.wrapMethodNamed(Animal, "legs_count", animal_legs),
+    },
+});
+
+const Dog = extern struct {
+    base: Animal,
+    good: bool,
+    pub fn init(legs: i64, good: bool) Dog {
+        return .{ .base = .{ .legs = legs }, .good = good };
+    }
+};
+fn dog_bark(self: *Dog) bool {
+    return self.good;
+}
+const DogClass = pz.PyClass(Dog, .{
+    .base = AnimalClass,
+    .init_args = &.{ "legs", "good" },
+    .methods = &[_]pz.PyMethodDef{
+        pz.wrapMethodNamed(Dog, "bark", dog_bark),
+    },
+});
+
 // A class holding a Python object reference -> participates in cyclic GC. The
 // framework owns the `next` reference, visits it in tp_traverse, and clears it
 // in tp_clear, so reference cycles are collectable.
@@ -839,7 +937,26 @@ const STUB = pz.moduleStub(.{
     .{ .name = "make_dt", .func = make_dt, .args = &.{ "year", "month", "day" } },
     .{ .name = "dt_year", .func = dt_year, .args = &.{"dt"} },
     .{ .name = "next_day", .func = next_day, .args = &.{"dt"} },
-});
+    .{ .name = "cmul", .func = cmul, .args = &.{ "a", "b" } },
+    .{ .name = "check_positive", .func = check_positive, .args = &.{"n"} },
+    .{ .name = "sum_all", .func = sum_all, .raw = true },
+    .{ .name = "dict_sum", .func = dict_sum, .args = &.{"m"} },
+    .{ .name = "lookup_zero", .func = lookup_zero, .args = &.{"m"} },
+    .{ .name = "unique_bytes", .func = unique_bytes, .args = &.{"data"} },
+}) ++
+    pz.classStub(.{
+        .name = "Animal",
+        .type = Animal,
+        .init = &.{"legs"},
+        .methods = .{.{ .name = "legs_count", .func = animal_legs }},
+    }) ++
+    pz.classStub(.{
+        .name = "Dog",
+        .type = Dog,
+        .base = "Animal",
+        .init = &.{ "legs", "good" },
+        .methods = .{.{ .name = "bark", .func = dog_bark }},
+    });
 
 // Class stubs so type checkers see the classes too.
 const CLASS_STUBS =
@@ -858,6 +975,9 @@ const CLASS_STUBS =
         .methods = .{
             .{ .name = "dot", .func = vec2_dot, .args = &.{ "other_x", "other_y" } },
         },
+        .properties = .{
+            .{ .name = "length_sq", .get = vec2_length_sq },
+        },
     }) ++
     pz.classStub(.{
         .name = "Range",
@@ -865,17 +985,35 @@ const CLASS_STUBS =
         .init = &.{ "start", "stop" },
     });
 
+// Custom exception type, reflected in the stub as a subclass.
+const EXC_STUBS = pz.exceptionStub("DemoError", "ValueError");
+
 fn __pyi__() []const u8 {
-    return STUB ++ "\n" ++ CLASS_STUBS;
+    return STUB ++ "\n" ++ CLASS_STUBS ++ EXC_STUBS;
 }
+
+fn sub_triple(x: i64) i64 {
+    return x * 3;
+}
+
+// A nested submodule: importable as `pyo3zig_demo.mathx` and reachable as the
+// attribute `pyo3zig_demo.mathx`.
+const MathxMod = pz.pyModule("mathx", .{
+    .doc = "Demo submodule with extra math helpers.",
+    .constants = .{ .E = @as(f64, 2.71828) },
+    .functions = &[_]pz.PyMethodDef{
+        pz.pyFnNamed("triple", sub_triple),
+    },
+});
 
 const Mod = pz.pyModule("pyo3zig_demo", .{
     .doc = "Demo module built with pyo3zig.",
     .constants = .{
-        .VERSION = "0.3.0",
+        .VERSION = "1.0.0",
         .MAX_ITEMS = @as(i64, 100),
         .PI = @as(f64, 3.14159),
     },
+    .submodules = .{MathxMod},
     .functions = &[_]pz.PyMethodDef{
         pz.pyFnNamed("hello", hello),
         pz.pyFnNamed("add", add),
@@ -907,8 +1045,14 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("make_dt", make_dt),
         pz.pyFnNamed("dt_year", dt_year),
         pz.pyFnNamed("next_day", next_day),
+        pz.pyFnNamed("cmul", cmul),
+        pz.pyFnNamed("check_positive", check_positive),
+        pz.pyFnRaw("sum_all", sum_all),
+        pz.pyFnNamed("dict_sum", dict_sum),
+        pz.pyFnNamed("lookup_zero", lookup_zero),
+        pz.pyFnNamed("unique_bytes", unique_bytes),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass, AwaiterClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass, FilePathClass, DoublerClass, IntrospectClass, PluginClass, MutableBufClass, AwaiterClass, AnimalClass, DogClass, DemoError },
 });
 
 comptime {

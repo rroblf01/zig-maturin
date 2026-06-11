@@ -38,8 +38,13 @@ Numbers vary by machine; run `python examples/bench.py` after building the demo.
 
 ```bash
 pip install zig-maturin     # the build tool (pure Python)
-# you also need Zig 0.14+ on PATH (https://ziglang.org/download/)
 ```
+
+No system toolchain is required: if `zig` is not on PATH, the build pulls in the
+[`ziglang`](https://pypi.org/project/ziglang/) wheel (a pinned Zig binary)
+automatically and compiles through it. If you already have
+[Zig 0.16](https://ziglang.org/download/) on PATH, that is used instead (no
+download).
 
 ## Quick start
 
@@ -53,12 +58,78 @@ zig-maturin build                   # produce a wheel in dist/
 
 Scaffolded projects use the **PEP 517 backend**
 (`build-backend = "zig_maturin.buildapi"`), so the standard tools work too —
-`pip install .`, `pip wheel .`, `python -m build` — with Zig on PATH:
+`pip install .`, `pip wheel .`, `python -m build`. If no `zig` is on PATH the
+backend adds `ziglang` as a build dependency automatically, so this works with
+no system toolchain:
 
 ```bash
 pip install .                       # builds + installs the extension
+pip install -e .                    # editable (PEP 660); re-run to recompile
 python -m build                     # wheel + sdist in dist/
 ```
+
+### What scaffold generates
+
+`zig-maturin scaffold my_extension` writes a complete, buildable project and
+wires up the Zig dependency for you (it runs `zig fetch --save` if `zig` is on
+PATH):
+
+```
+my_extension/
+├── pyproject.toml      # [tool.zig-maturin] config + PEP 517 backend
+├── build.zig           # the Zig build script (links pyo3zig + the C shim)
+├── build.zig.zon       # dependency manifest (zig-maturin pinned with a hash)
+└── src/main.zig        # your extension — edit this
+```
+
+You normally only touch `src/main.zig`. The generated `build.zig` already wires
+in the two modules and the C shim — you rarely need to change it:
+
+```zig
+const zm_dep = b.dependency("zig-maturin", .{ .target = target, .optimize = optimize });
+
+const mod = b.createModule(.{
+    .root_source_file = b.path("src/main.zig"),
+    .target = target,
+    .optimize = optimize,
+    .imports = &.{
+        .{ .name = "zig-maturin", .module = zm_dep.module("zig-maturin") }, // low-level C-API
+        .{ .name = "pyo3zig", .module = zm_dep.module("pyo3zig") },         // high-level layer
+    },
+});
+
+const lib = b.addLibrary(.{ .name = "my_extension", .linkage = .dynamic, .root_module = mod });
+lib.root_module.link_libc = true;
+lib.root_module.addCSourceFile(.{ .file = zm_dep.path("pyo3zig_capi.c"), .flags = &.{} });
+// CPython symbols resolve against the interpreter at import time:
+lib.linker_allow_shlib_undefined = true;
+b.installArtifact(lib);
+```
+
+**Adding pyo3zig to an existing Zig project** (instead of scaffolding): run
+`zig fetch --save=zig-maturin git+https://github.com/rroblf01/zig-maturin`, then
+add the two `.imports` and the `addCSourceFile`/`link_libc`/
+`linker_allow_shlib_undefined` lines above to your `build.zig`.
+
+For a feature-by-feature tour of a real, compiled extension, see the
+[examples walkthrough](examples/README.md) (the source is
+[`pyo3zig_example.zig`](pyo3zig_example.zig), built by `zig build` and exercised
+by the test suite).
+
+### Mixed Python/Zig packages
+
+Ship pure-Python code alongside the native module: put a package at
+`<python-source>/<module-name>/` (e.g. `src/my_extension/__init__.py`). The wheel
+then bundles those `.py` files and nests the compiled extension inside the
+package as `my_extension/my_extension.<so>`, which `__init__.py` re-exports:
+
+```python
+# src/my_extension/__init__.py
+from .my_extension import *      # the Zig extension
+from .helpers import wrapper     # pure-Python companion code
+```
+
+Without such a package, the extension is installed as a top-level `module.so`.
 
 ### One wheel for all CPython versions (abi3)
 
@@ -81,6 +152,34 @@ The framework already uses out-of-line refcounting and accessor functions (not
 inline macros), so abi3 adds ~no runtime overhead here. Managed `__dict__` and
 weakref need the GC pre-header and are unavailable under abi3 (cyclic GC of
 `?*pz.PyObject` fields still works).
+
+### Free-threading (no-GIL, PEP 703) — not yet
+
+Free-threaded interpreters (`python3.13t` / `python3.14t`) are **not supported
+yet**. The C shim already opts in (`Py_MOD_GIL_NOT_USED`) and is refcount-clean,
+but a free-threaded build has a wider `PyObject` header, so the Zig-side module
+and instance layouts need a free-threaded-specific definition before the
+extension can load there. Regular (with-GIL) CPython is fully supported.
+
+### Sub-interpreters
+
+Modules use multi-phase init (PEP 489) and declare support for sub-interpreters,
+so the extension can be imported into more than one interpreter (which
+single-phase modules cannot). Type objects and the cached `datetime` / awaitable
+/ exception objects are keyed per interpreter — each interpreter gets its own, so
+nothing is shared across the interpreter boundary. Classes, operators,
+inheritance, container conversions, `datetime` and custom exceptions all work in
+a sub-interpreter (see `tests/test_subinterp.py`).
+
+Shared-GIL ("legacy") sub-interpreters are fully supported. Per-interpreter-GIL
+(truly parallel interpreters) is not yet declared — the per-interpreter caches
+rely on the shared GIL for serialization.
+
+## Stability
+
+`1.0.0` is the first stable release. The public Zig API (`pyo3zig`, imported as
+`pz`) and the `zig_maturin` build tooling follow semantic versioning: breaking
+changes wait for a major bump.
 
 ## Writing an extension
 
@@ -125,12 +224,15 @@ Zig error surface as a Python exception.
 |---|---|---|
 | `i8`..`i64`, `u8`..`u64` | `int` | `int` |
 | `f32`, `f64` | `float` | `float` |
+| `std.math.Complex(f64/f32)` | `complex` (int/float coerced) | `complex` |
 | `bool` | `bool` | `bool` |
 | `enum` | `int` (validated; bad value → `ValueError`) | `int` |
 | `pz.DateTime` | `datetime.datetime` | `datetime.datetime` |
-| `[]const u8` | `str` / `bytes` / `bytearray` (borrowed) | `str` |
+| `[]const u8` | `str` / `bytes` / `bytearray` / `os.PathLike` (borrowed) | `str` |
 | `?T` | `T` or `None` | `T` or `None` |
 | `[]T`, `[N]T` | `list` / `tuple` | `list` |
+| `std.StringHashMap(V)`, `std.AutoHashMap(K,V)` | `dict` | `dict` |
+| `pz.PySet`, `pz.PyFrozenSet` | — | `set` / `frozenset` |
 | tuple struct | `list` / `tuple` | `tuple` |
 | plain struct | `dict` (by field name; field defaults honored) | `dict` (by field name) |
 | `*MyClass` | an instance of `MyClass` (borrowed) | — |
@@ -303,7 +405,83 @@ fn parse_positive(x: i64) !i64 {
 }
 ```
 
-`pz.newException("mymod.MyError", null)` creates a custom exception type.
+For a reusable custom exception, declare a `pz.exceptionClass`, register it in
+`.classes`, and raise it from Zig:
+
+```zig
+const MyError = pz.exceptionClass("mymod.MyError", pz.PyExc_ValueError);
+// .classes = &.{ ..., MyError }
+
+fn check(n: i64) !i64 {
+    if (n < 0) { MyError.raise("must be non-negative"); return error.Bad; }
+    return n;
+}
+```
+
+`MyError` becomes `mymod.MyError` (a `ValueError` subclass) on the Python side.
+Pass `null` as the base for a plain `Exception`. (`pz.newException(...)` remains
+for one-off types not registered as a class.)
+
+### Inheritance
+
+A Zig class can inherit from another Zig class with `.base`. The derived struct
+must embed the base's struct as its **first field**; the base's methods and
+field accessors are then inherited and `isinstance`/`issubclass` work:
+
+```zig
+const Animal = extern struct {
+    legs: i64,
+    pub fn init(legs: i64) Animal { return .{ .legs = legs }; }
+};
+const AnimalClass = pz.PyClass(Animal, .{ .init_args = &.{"legs"}, ... });
+
+const Dog = extern struct {
+    base: Animal,            // the base, embedded first
+    good: bool,
+    pub fn init(legs: i64, good: bool) Dog {
+        return .{ .base = .{ .legs = legs }, .good = good };
+    }
+};
+const DogClass = pz.PyClass(Dog, .{ .base = AnimalClass, .init_args = &.{ "legs", "good" }, ... });
+```
+
+```python
+d = Dog(4, True)
+isinstance(d, Animal)   # True; d.legs and inherited methods work
+class Puppy(Dog): ...   # Python can subclass the derived class too
+```
+
+Register the base in `.classes` before the derived class.
+
+### Computed properties
+
+Expose getter/setter attributes (not backed by a struct field) with
+`.properties`:
+
+```zig
+const Vec2Class = pz.PyClass(Vec2, .{
+    .properties = &.{
+        .{ .name = "length_sq", .get = vec2_length_sq },        // read-only
+        .{ .name = "x", .get = vec2_get_x, .set = vec2_set_x },  // read-write
+    },
+});
+```
+
+### Variadic functions (`*args` / `**kwargs`)
+
+`pz.pyFnRaw` registers a function that receives the raw argument tuple and
+keyword dict:
+
+```zig
+fn sum_all(args: ?*pz.PyObject, kwargs: ?*pz.PyObject) i64 {
+    var total: i64 = 0;
+    var i: isize = 0;
+    while (i < pz.PyTuple_Size(args)) : (i += 1)
+        total += pz.PyLong_AsLongLong(pz.PyTuple_GetItem(args, i));
+    return total;
+}
+// pz.pyFnRaw("sum_all", sum_all)
+```
 
 ### Module constants
 
@@ -313,6 +491,30 @@ const Mod = pz.pyModule("my_extension", .{
     .functions = &.{ ... },
     .classes   = &.{ GreeterClass },
 });
+```
+
+### Submodules
+
+Nest modules with `.submodules`. Each child is set as an attribute of the parent
+and registered in `sys.modules` under its dotted name, so both attribute access
+and `import parent.child` work:
+
+```zig
+const MathxMod = pz.pyModule("mathx", .{
+    .constants = .{ .E = @as(f64, 2.71828) },
+    .functions = &.{ pz.pyFnNamed("triple", triple) },
+});
+
+const Mod = pz.pyModule("my_extension", .{
+    .submodules = .{ MathxMod },
+    .functions  = &.{ ... },
+});
+```
+
+```python
+import my_extension
+my_extension.mathx.triple(4)        # attribute access
+from my_extension.mathx import triple   # dotted import
 ```
 
 ### Error handling and panics
@@ -341,8 +543,11 @@ fn __pyi__() []const u8 { return STUB; }
 // register pz.pyFnNamed("__pyi__", __pyi__)
 ```
 
-`classStub` emits a `class` block (struct fields as attributes, `__init__`, and
-methods) so type checkers see your classes too.
+`classStub` emits a `class` block (struct fields as attributes, `__init__`,
+methods, and `.properties` as `@property` accessors). For variadic functions set
+`.raw = true` on the `moduleStub` entry (rendered as `*args, **kwargs`), and for
+custom exceptions use `pz.exceptionStub("MyError", "ValueError")`. `complex`,
+`datetime`, optionals and containers map to their Python spellings automatically.
 
 `zig-maturin build` calls `__pyi__()` on native builds and ships the resulting
 `my_extension.pyi` inside the wheel, so type checkers see your signatures.
@@ -355,6 +560,7 @@ methods) so type checkers see your classes too.
 | `zig-maturin develop` | Build and install into the current environment. |
 | `zig-maturin build` | Build a wheel in `dist/`. |
 | `zig-maturin sdist` | Build a source distribution. |
+| `zig-maturin generate-ci` | Write a GitHub Actions workflow that builds + publishes wheels. |
 
 `build` / `develop` options: `--target <triple>` (repeatable), `--release`,
 `--out <dir>`, `--abi3 <X.Y>` (build a stable-ABI wheel), and for
@@ -395,10 +601,21 @@ zig-source  = "src/main.zig"
 # python-lib     = "python312"
 ```
 
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `error: expected ... found` on `zig build`, or unknown builtins | Wrong Zig version. zig-maturin targets **Zig 0.16**; check `zig version`, or just don't install Zig and let the build pull in the pinned `ziglang` wheel. |
+| `zig fetch failed` during scaffold | No `zig` on PATH at scaffold time. Run the printed command later: `zig fetch --save=zig-maturin git+https://github.com/rroblf01/zig-maturin`. The build itself still works toolchain-free. |
+| `python3-config not found` / `Python.h` missing | Install the Python dev headers (`python3-dev` / `python3-devel`), or use the official `python.org` build. For **cross-compilation** the host can't detect the target's headers — pass `--python-include` (and on Windows `--python-libdir`/`--python-lib`). |
+| `ImportError: undefined symbol: Py...` at import | Almost always an ABI mismatch: the wheel was built for a different Python. Rebuild against the interpreter you're importing into, or build an `abi3 = "3.12"` wheel for forward compatibility. |
+| `ModuleNotFoundError` after `zig build` | `zig build` drops the `.so` in `zig-out/lib/lib<name>.so`; Python needs it as `<name>.so` on `sys.path`. Use `zig-maturin develop` (installs it correctly) instead of importing from `zig-out`. |
+| Interpreter aborts on a Zig panic | Add `pub const panic = pz.panic;` to turn panics into `RuntimeError` (see [Error handling and panics](#error-handling-and-panics)). |
+
 ## Requirements
 
-- Python 3.12+
-- Zig 0.14+ (tested with 0.16.0)
+- Python 3.12+ (free-threaded `3.13t` / `3.14t` not supported yet)
+- Zig 0.16 — on PATH, or pulled in automatically as the `ziglang` wheel
 - Linux, macOS, or Windows
 
 ## License

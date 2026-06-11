@@ -452,11 +452,42 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const needs_finalize = has_deinit or is_gc;
     const can_subclass = true;
 
-    // Cached type object (set once the type is built), used for isinstance
-    // checks in operator dispatch so subclasses dispatch correctly.
+    // Per-interpreter cache of this class's type object. Keyed by interpreter so
+    // a type created in one (sub-)interpreter is never reused in another (which
+    // would be a hard error). Used for isinstance in operator dispatch and to
+    // share the base type within one interpreter's module init (inheritance).
+    // The shared GIL serializes access (see the module's multi-phase slots).
     const TypeRef = struct {
-        const Owner = T; // force a distinct type (and static var) per class
-        var obj: ?*zm.PyObject = null;
+        const Owner = T; // force a distinct type (and static vars) per class
+        const Entry = struct { interp: ?*anyopaque = null, obj: ?*zm.PyObject = null };
+        var entries: [16]Entry = .{Entry{}} ** 16;
+
+        fn get() ?*zm.PyObject {
+            const cur = zm.PyInterpreterState_Get();
+            for (&entries) |*e| {
+                if (e.interp == cur) return e.obj;
+            }
+            return null;
+        }
+        fn put(o: ?*zm.PyObject) void {
+            const cur = zm.PyInterpreterState_Get();
+            for (&entries) |*e| {
+                if (e.interp == null or e.interp == cur) {
+                    e.* = .{ .interp = cur, .obj = o };
+                    return;
+                }
+            }
+            // Table full (16+ live interpreters): reuse the first slot.
+            entries[0] = .{ .interp = cur, .obj = o };
+        }
+        // Drop the current interpreter's entry on module teardown (avoids a stale
+        // pointer that a later interpreter reusing the address would misread).
+        fn clear() void {
+            const cur = zm.PyInterpreterState_Get();
+            for (&entries) |*e| {
+                if (e.interp == cur) e.* = .{};
+            }
+        }
     };
 
     // tp_finalize: runs once before deallocation (CPython saves/restores any
@@ -827,7 +858,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         // the cached type object so subclasses (with a different tp_name) still
         // dispatch operators correctly.
         fn isOurs(obj: ?*zm.PyObject) bool {
-            if (TypeRef.obj) |ty| return zm.PyObject_IsInstance(obj, ty) == 1;
+            if (TypeRef.get()) |ty| return zm.PyObject_IsInstance(obj, ty) == 1;
             return std.mem.eql(u8, std.mem.span(zm.pz_type_name(obj)), short_name);
         }
         fn convertResult(cls: ?*zm.PyObject, result: anytype) ?*zm.PyObject {
@@ -1468,10 +1499,33 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
 
     const has_properties = @hasField(@TypeOf(config), "properties");
 
+    // Zig-class inheritance: `.base = SomeZigClass` makes this a subclass of
+    // another `PyClass` (Py_tp_base). Contract: the derived struct's FIRST field
+    // is the base's struct, so the base's inherited field accessors and methods
+    // read the same memory offset on a derived instance (the `PyCell` data sits
+    // right after the object header for both). That base field is not re-exposed
+    // as an attribute here — the inherited base getsets already cover it.
+    const has_base = @hasField(@TypeOf(config), "base");
+    const base_skip = if (has_base) 1 else 0;
+    if (has_base) {
+        const BaseT = @FieldType(config.base.pycell.ObjectLayout, "data");
+        const fields0 = std.meta.fields(T);
+        if (fields0.len == 0 or fields0[0].type != BaseT) {
+            @compileError("a class with `.base` must have the base's struct (" ++
+                @typeName(BaseT) ++ ") as its first field");
+        }
+    }
+
     const TypeBuilder = struct {
         fn getTypeObject() ?*zm.PyObject {
+            // Return this interpreter's already-built type so repeated calls
+            // (e.g. a derived class referencing this one as its base) share one
+            // type object within the interpreter.
+            if (TypeRef.get()) |existing| return existing;
             const fields = comptime std.meta.fields(T);
-            const field_count = fields.len;
+            // The embedded base field (when `.base` is set) is not exposed as a
+            // getset, so it doesn't count toward the field accessors.
+            const field_count = fields.len - base_skip;
             const prop_count = if (has_properties) config.properties.len else 0;
             // +1 for the __dict__ descriptor on GC classes (managed dict; not
             // under abi3), +1 sentinel.
@@ -1489,6 +1543,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             });
 
             inline for (fields, 0..) |field, i| {
+                if (i < base_skip) continue; // the embedded base field
                 const is_pyobj_field = field.type == ?*zm.PyObject;
                 const FieldWrapper = struct {
                     fn getter(obj: ?*zm.PyObject, _: ?*anyopaque) callconv(.c) ?*zm.PyObject {
@@ -1534,7 +1589,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
                     }
                     break :blk false;
                 });
-                getset_defs[i] = .{
+                getset_defs[i - base_skip] = .{
                     .name = field_name,
                     .get = &FieldWrapper.getter,
                     .set = if (is_readonly) null else &FieldWrapper.setter,
@@ -1737,9 +1792,17 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_descr_assign) slot_count += 1;
             if (has_any_buffer) slot_count += 1;
             if (is_gc) slot_count += 2; // tp_traverse + tp_clear
+            if (has_base) slot_count += 1; // Py_tp_base
 
             var slots: [slot_count]zm.PyType_Slot = undefined;
             var slot_idx: usize = 0;
+            // Base class (Zig-class inheritance): set before the rest so the
+            // derived type inherits the base's methods/getsets via the MRO.
+            if (has_base) {
+                const base_type = config.base.py_type_obj() orelse return null;
+                slots[slot_idx] = .{ .slot = zm.Py_tp_base, .pfunc = @ptrCast(base_type) };
+                slot_idx += 1;
+            }
             // tp_finalize (not a custom tp_dealloc) runs __deinit__ and releases
             // PyObject fields; CPython's subtype_dealloc does the rest, so the
             // type stays subclassable from Python.
@@ -2015,7 +2078,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             };
 
             const result = zm.PyType_FromSpec(&spec);
-            TypeRef.obj = result;
+            TypeRef.put(result);
             return result;
         }
     };
@@ -2027,6 +2090,11 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
         pub fn class_name() [*:0]const u8 {
             return type_name;
+        }
+        /// Drop this class's cached type for the current interpreter (module
+        /// teardown). Keeps the per-interpreter cache free of stale pointers.
+        pub fn clearTypeCache() void {
+            TypeRef.clear();
         }
     };
 }
@@ -2073,6 +2141,50 @@ pub fn enumClass(comptime E: type, comptime name: [:0]const u8) type {
         }
         pub fn class_name() [*:0]const u8 {
             return @as([*:0]const u8, @ptrCast(name.ptr));
+        }
+    };
+}
+
+/// A custom Python exception type, registerable in a module's `.classes` and
+/// raisable from Zig. `qualified_name` must be "module.ClassName" (PyErr_New-
+/// Exception requires the dot). `base_fn` is a function returning the base
+/// exception type (e.g. `zm.PyExc_ValueError`) or `null` for `Exception`.
+///
+///     const MyError = pz.exceptionClass("mymod.MyError", null);
+///     // in .classes = &.{ ..., MyError }
+///     // raise from Zig: MyError.raise("something went wrong");
+pub fn exceptionClass(comptime qualified_name: [:0]const u8, comptime base_fn: anytype) type {
+    return struct {
+        // Per-interpreter cache: each interpreter that imports the module gets
+        // its own exception type. Borrowed (the module attribute keeps it alive).
+        var cache: @import("interp.zig").Cache(16) = .{};
+
+        pub fn py_type_obj() ?*zm.PyObject {
+            const base: ?*zm.PyObject = if (@TypeOf(base_fn) == @TypeOf(null)) null else base_fn();
+            const t = zm.PyErr_NewException(
+                @as([*:0]const u8, @ptrCast(qualified_name.ptr)),
+                base,
+                null,
+            ) orelse return null;
+            cache.put(t);
+            return t;
+        }
+        pub fn class_name() [*:0]const u8 {
+            const dot = std.mem.lastIndexOfScalar(u8, qualified_name, '.');
+            const short = if (dot) |d| qualified_name[d + 1 ..] else qualified_name[0..];
+            return @as([*:0]const u8, @ptrCast(short.ptr));
+        }
+        /// This interpreter's exception type object (null before module init).
+        pub fn get() ?*zm.PyObject {
+            return cache.get();
+        }
+        /// Raise this exception with a message (sets the Python error indicator).
+        pub fn raise(msg: [*:0]const u8) void {
+            zm.PyErr_SetString(cache.get() orelse zm.PyExc_Exception(), msg);
+        }
+        /// Drop this interpreter's cached exception type (module teardown).
+        pub fn clearTypeCache() void {
+            cache.clear();
         }
     };
 }

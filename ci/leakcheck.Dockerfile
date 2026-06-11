@@ -29,11 +29,16 @@ ENV PYTHONMALLOC=malloc
 
 RUN zig build
 
-CMD ["bash", "-c", "cp zig-out/lib/libpyo3zig_demo.so pyo3zig_demo.so && \
+CMD ["bash", "-c", "set -e; cp zig-out/lib/libpyo3zig_demo.so pyo3zig_demo.so && \
   valgrind \
-    --leak-check=full \
-    --show-leak-kinds=definite,indirect \
-    --num-callers=20 \
+    --leak-check=full --show-leak-kinds=definite,indirect --num-callers=20 \
     --log-file=/tmp/valgrind.log \
     python3 tests/test_pyo3zig.py && \
-  python3 ci/check_leaks.py /tmp/valgrind.log"]
+  python3 ci/check_leaks.py /tmp/valgrind.log && \
+  sed 's/range(100)/range(10)/' tests/test_subinterp.py > /tmp/si_small.py && \
+  sed 's/range(100)/range(80)/' tests/test_subinterp.py > /tmp/si_big.py && \
+  valgrind --leak-check=full --show-leak-kinds=definite,indirect --num-callers=20 \
+    --log-file=/tmp/vg_si_small.log python3 /tmp/si_small.py && \
+  valgrind --leak-check=full --show-leak-kinds=definite,indirect --num-callers=20 \
+    --log-file=/tmp/vg_si_big.log python3 /tmp/si_big.py && \
+  python3 ci/check_leaks.py --scaling /tmp/vg_si_small.log /tmp/vg_si_big.log 10 80"]

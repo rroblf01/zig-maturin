@@ -11,6 +11,29 @@ from .config import ZigMaturinConfig, find_project_root
 from .wheel import build_wheel, generate_metadata
 
 
+def zig_command() -> list[str]:
+    """The command that runs the Zig compiler.
+
+    Prefers a `zig` already on PATH (fastest, what developers usually have).
+    Falls back to the `ziglang` PyPI package (`python -m ziglang`), which ships
+    a pinned Zig binary — so a `pip install` with `ziglang` as a build dep works
+    with no system toolchain. Raises if neither is available.
+    """
+    import shutil
+
+    if shutil.which("zig"):
+        return ["zig"]
+    try:
+        import ziglang  # noqa: F401
+
+        return [sys.executable, "-m", "ziglang"]
+    except ImportError:
+        raise SystemExit(
+            "zig-maturin: no Zig toolchain found. Install Zig and put it on "
+            "PATH, or `pip install ziglang`."
+        )
+
+
 def get_host_target() -> str:
     machine = platform.machine().lower()
     system = platform.system().lower()
@@ -163,7 +186,16 @@ def build_project(
     if not targets:
         targets = [get_host_target()]
 
-    python_version = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    # A free-threaded (no-GIL, PEP 703) interpreter has its own ABI. Only the
+    # *ABI* tag carries the `t` suffix (e.g. cp313t); the interpreter tag stays
+    # cp313. The full wheel tag is therefore `cp313-cp313t-...` — pip on a
+    # free-threaded build looks for exactly that, and `cp313t-cp313t-...` would
+    # match no compatible tag. Detected from the interpreter doing the build.
+    free_threaded = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
+    ft = "t" if free_threaded else ""
+    cp = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    python_interp_tag = cp           # cp313        (interpreter tag, no `t`)
+    python_abi_tag = f"{cp}{ft}"     # cp313 / cp313t (ABI tag)
     wheels: list[Path] = []
 
     # abi3: one stable-ABI wheel tagged at the configured minimum version.
@@ -180,7 +212,7 @@ def build_project(
 
         print(f"Building for target: {target}")
         cmd = [
-            "zig",
+            *zig_command(),
             "build",
             f"-Dtarget={target}",
             f"-Doptimize={optimize}",
@@ -240,12 +272,19 @@ def build_project(
             python_tag = abi3_python_tag
             abi_tag = "abi3"
         else:
-            python_tag = python_version
-            abi_tag = python_version
+            python_tag = python_interp_tag
+            abi_tag = python_abi_tag
 
         # Native builds: embed the comptime-generated type stub. Cross builds
         # can't import the artifact, so this returns None and is skipped.
         pyi = extract_stub(built_so, mod_name, so_suffix)
+
+        # Mixed Python/Zig layout: if `<python_source>/<module_name>/` is a
+        # package, ship it and nest the extension inside it.
+        pkg_src = root / config.python_source / mod_name
+        py_package = pkg_src if (pkg_src / "__init__.py").exists() else None
+        if py_package is not None:
+            print(f"  mixed layout: bundling Python package {pkg_src}")
 
         wheel_path = build_wheel(
             module_name=mod_name,
@@ -262,12 +301,15 @@ def build_project(
             license=config.license,
             classifiers=config.classifiers,
             pyi=pyi,
+            py_package=py_package,
         )
         wheels.append(wheel_path)
         print(f"Created wheel: {wheel_path}")
 
         if develop:
-            install_wheel_develop(wheel_path, mod_name, built_so, so_suffix)
+            install_wheel_develop(
+                wheel_path, mod_name, built_so, so_suffix, py_package=py_package
+            )
 
     return wheels
 
@@ -362,7 +404,11 @@ def build_sdist(config: ZigMaturinConfig, out: str = "dist") -> Path:
 
 
 def install_wheel_develop(
-    wheel_path: Path, mod_name: str, so_path: Path, so_suffix: str = ".so"
+    wheel_path: Path,
+    mod_name: str,
+    so_path: Path,
+    so_suffix: str = ".so",
+    py_package: Path | None = None,
 ) -> None:
     site_packages = Path(
         subprocess.check_output(
@@ -371,8 +417,20 @@ def install_wheel_develop(
         ).strip()
     )
 
-    dest = site_packages / f"{mod_name}{so_suffix}"
     import shutil
 
+    if py_package is not None:
+        # Mixed layout: copy the package tree, then nest the extension in it.
+        pkg_dest = site_packages / mod_name
+        if pkg_dest.exists():
+            shutil.rmtree(pkg_dest)
+        shutil.copytree(
+            py_package, pkg_dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+        )
+        shutil.copy2(so_path, pkg_dest / f"{mod_name}{so_suffix}")
+        print(f"Installed package {mod_name} (+ extension) -> {pkg_dest}")
+        return
+
+    dest = site_packages / f"{mod_name}{so_suffix}"
     shutil.copy2(so_path, dest)
     print(f"Installed {so_path.name} -> {dest}")

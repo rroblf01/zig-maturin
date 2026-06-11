@@ -44,13 +44,61 @@ static PyType_Spec pzra_spec = {
     .flags = Py_TPFLAGS_DEFAULT,
     .slots = pzra_slots,
 };
-static PyObject* pzra_type = NULL; /* created once, kept for the process */
+/* The awaitable type is cached PER INTERPRETER: a heap type belongs to the
+ * interpreter that created it, so it must not be shared across sub-interpreters.
+ * Keyed by PyInterpreterState*; the (shared) GIL serializes access, and the
+ * mutex additionally guards a free-threaded build. */
+typedef struct { PyInterpreterState* interp; PyObject* type; } PzraEntry;
+static PzraEntry pzra_entries[16];
+
+#ifdef Py_GIL_DISABLED
+static PyMutex pzra_lock = {0};
+#endif
+
+static PyObject* pzra_get_type(void) {
+    PyInterpreterState* cur = PyInterpreterState_Get();
+    for (int i = 0; i < 16; i++) {
+        if (pzra_entries[i].interp == cur) return pzra_entries[i].type;
+    }
+#ifdef Py_GIL_DISABLED
+    PyMutex_Lock(&pzra_lock);
+    for (int i = 0; i < 16; i++) {
+        if (pzra_entries[i].interp == cur) { PyMutex_Unlock(&pzra_lock); return pzra_entries[i].type; }
+    }
+#endif
+    PyObject* t = PyType_FromSpec(&pzra_spec);
+    if (t) {
+        int placed = 0;
+        for (int i = 0; i < 16; i++) {
+            if (pzra_entries[i].interp == NULL) { pzra_entries[i].interp = cur; pzra_entries[i].type = t; placed = 1; break; }
+        }
+        if (!placed) { pzra_entries[0].interp = cur; pzra_entries[0].type = t; }
+    }
+#ifdef Py_GIL_DISABLED
+    PyMutex_Unlock(&pzra_lock);
+#endif
+    return t;
+}
+
+/* Drop the current interpreter's awaitable type on module teardown, so a later
+ * interpreter reusing the freed PyInterpreterState address never reads a stale
+ * type pointer. */
+void pyo3zig_clear_awaitable_cache(void) {
+    PyInterpreterState* cur = PyInterpreterState_Get();
+    for (int i = 0; i < 16; i++) {
+        if (pzra_entries[i].interp == cur) {
+            /* We own this type (PyType_FromSpec); release it so a torn-down
+             * interpreter doesn't leak its awaitable type. */
+            Py_XDECREF(pzra_entries[i].type);
+            pzra_entries[i].interp = NULL;
+            pzra_entries[i].type = NULL;
+        }
+    }
+}
 
 static PyObject* pzra_new(PyObject* value, int is_stop) {
-    if (!pzra_type) {
-        pzra_type = PyType_FromSpec(&pzra_spec);
-        if (!pzra_type) return NULL;
-    }
+    PyObject* pzra_type = pzra_get_type();
+    if (!pzra_type) return NULL;
     PzReadyAwaitable* a =
         (PzReadyAwaitable*)PyType_GenericAlloc((PyTypeObject*)pzra_type, 0);
     if (!a) return NULL;
@@ -65,6 +113,20 @@ PyObject* pyo3zig_make_ready_awaitable(PyObject* value) { return pzra_new(value,
 
 /* Awaitable that raises StopAsyncIteration (ends an `async for`). */
 PyObject* pyo3zig_make_stop_async_awaitable(void) { return pzra_new(NULL, 1); }
+
+/* Declare that this single-phase module is safe to run without the GIL. On a
+ * free-threaded interpreter, modules that do not opt in force the GIL back on
+ * for the whole process; opting in keeps the no-GIL benefit. No-op on a regular
+ * build (and under the Limited API, which has no free-threaded ABI). The shim
+ * already uses out-of-line refcounting and per-thread state, and the lazy caches
+ * are mutex-guarded, so the extension is free-threading clean. */
+void pyo3zig_module_declare_no_gil(PyObject* module) {
+#if defined(Py_GIL_DISABLED) && !defined(Py_LIMITED_API)
+    PyUnstable_Module_SetGIL(module, Py_MOD_GIL_NOT_USED);
+#else
+    (void)module;
+#endif
+}
 
 /* Return the await-iterator of an arbitrary awaitable (coroutine, Future, or an
  * object with __await__). Every awaitable exposes __await__, so calling it is
@@ -227,6 +289,12 @@ PyObject* pyo3zig_PyTuple_Type(void) { return (PyObject*)&PyTuple_Type; }
 PyObject* pyo3zig_PyType_Type(void) { return (PyObject*)&PyType_Type; }
 PyObject* pyo3zig_PyBytes_Type(void) { return (PyObject*)&PyBytes_Type; }
 PyObject* pyo3zig_PyByteArray_Type(void) { return (PyObject*)&PyByteArray_Type; }
+
+/* PyComplex_Check is a macro; wrap it so Zig can call it. */
+int pyo3zig_PyComplex_Check(PyObject* o) { return PyComplex_Check(o); }
+
+/* PyAnySet_Check (set or frozenset) is a macro; wrap it for Zig. */
+int pyo3zig_PyAnySet_Check(PyObject* o) { return PyAnySet_Check(o); }
 
 /* The canonical "this type is unhashable" hash function. CPython special-cases
  * this exact pointer in tp_hash to expose __hash__ as None (the semantics of a

@@ -306,9 +306,19 @@ except RuntimeError:
 check("Boomable(5).v", m.Boomable(5).v == 5)
 
 # test_module_constants
-check("VERSION constant", m.VERSION == "0.3.0")
+check("VERSION constant", m.VERSION == "1.0.0")
 check("MAX_ITEMS constant", m.MAX_ITEMS == 100)
 check("PI constant", abs(m.PI - 3.14159) < 1e-9)
+
+# test_submodule (nested module: attribute access + dotted import + sys.modules)
+check("submodule attribute", hasattr(m, "mathx"))
+check("submodule function", m.mathx.triple(4) == 12)
+check("submodule constant", abs(m.mathx.E - 2.71828) < 1e-9)
+check("submodule __name__ is dotted", m.mathx.__name__ == "pyo3zig_demo.mathx")
+import importlib  # noqa: E402
+
+check("submodule importable via dotted name", importlib.import_module("pyo3zig_demo.mathx").triple(3) == 9)
+check("submodule registered in sys.modules", "pyo3zig_demo.mathx" in sys.modules)
 
 # test_no_leaks (refcounts must stay stable across many calls)
 _obj = object()
@@ -332,6 +342,74 @@ for _ in range(5000):
     _d = m.DeinitTracker()
     del _d
 check("DeinitTracker: every instance finalized", m.get_deinit_count() - _n0 == 5000)
+
+# test_no_leaks_new_features (refcount stability for the 1.0 conversions/paths;
+# the 20k iterations also let the Valgrind gate catch a scaling C-level leak).
+# dict -> HashMap: the dict's key and value objects must not be over-retained.
+_kobj = "leakkey"
+_vobj = 123456789  # a distinct int object
+_dct = {_kobj: _vobj}
+_kb, _vb = sys.getrefcount(_kobj), sys.getrefcount(_vobj)
+for _ in range(20000):
+    m.dict_sum({"a": 1, "b": 2})
+    m.lookup_zero({0: 7, 1: 8})
+check("dict->HashMap: key refcount stable", sys.getrefcount(_kobj) == _kb)
+check("dict->HashMap: value refcount stable", sys.getrefcount(_vobj) == _vb)
+del _dct
+
+# set output: returned sets must be fully owned by the caller (and freeable).
+for _ in range(20000):
+    _st = m.unique_bytes(b"abcabc")
+    del _st
+gc.collect()
+check("set output: no growth", True)
+
+# complex round-trip.
+for _ in range(20000):
+    m.cmul(complex(1, 2), complex(3, 4))
+check("complex: no leak (stress)", True)
+
+# variadic: the passed objects are borrowed, never over-retained.
+_va = object()
+_vab = sys.getrefcount(_va)
+for _ in range(20000):
+    m.sum_all(1, 2, 3)
+check("variadic: arg tuple borrowed (no leak)", sys.getrefcount(_va) == _vab)
+
+# custom exception raise + catch loop must not leak the exception/type.
+for _ in range(20000):
+    try:
+        m.check_positive(-1)
+    except m.DemoError:
+        pass
+check("custom exception: raise/catch no leak", True)
+
+# os.PathLike argument: the fspath result is copied into the call arena and
+# released; the path object's refcount must stay stable. Exercise the error
+# path too (non-path-like -> TypeError, with PyErr_Clear).
+import pathlib as _pl  # noqa: E402
+
+_p = _pl.PurePath("/tmp/leak")
+_pb = sys.getrefcount(_p)
+for _ in range(20000):
+    m.greet(_p)
+    try:
+        m.greet(12345)  # not path-like -> TypeError (error path must not leak)
+    except TypeError:
+        pass
+check("pathlike: path arg refcount stable", sys.getrefcount(_p) == _pb)
+
+# inheritance: create/destroy many derived instances + Python subclasses.
+class _Pup(m.Dog):
+    pass
+
+
+for _ in range(20000):
+    _d = m.Dog(4, True)
+    _q = _Pup(3, False)
+    del _d, _q
+gc.collect()
+check("inheritance: instance churn no crash/leak", True)
 
 # test_kwargs_and_defaults
 check("power default exp", m.power(3) == 9)
@@ -389,6 +467,11 @@ check(
 check("stub has class Range", "class Range:" in _stub)
 check("stub has dunder __eq__", "def __eq__(self, other:" in _stub, _stub)
 check("stub has dunder __len__", "def __len__(self) -> int" in _stub, _stub)
+# 1.0 features reflected in the stub.
+check("stub maps complex", "def cmul(a: complex, b: complex) -> complex" in _stub, _stub)
+check("stub varargs", "def sum_all(*args: object, **kwargs: object) -> int" in _stub, _stub)
+check("stub property", "@property\n    def length_sq(self) -> int" in _stub, _stub)
+check("stub custom exception", "class DemoError(ValueError): ..." in _stub, _stub)
 
 # test_module
 check("has hello", hasattr(m, "hello"))
@@ -610,6 +693,107 @@ try:
     check("datetime type error", False, "no exception")
 except TypeError as e:
     check("datetime type error", "datetime" in str(e), str(e))
+
+# test_complex (std.math.Complex <-> Python complex)
+check("complex multiply", m.cmul(complex(1, 2), complex(3, 4)) == complex(-5, 10))
+check("complex from int (imag 0)", m.cmul(2, complex(1, 1)) == complex(2, 2))
+check("complex from float", m.cmul(2.5, complex(2, 0)) == complex(5, 0))
+try:
+    m.cmul("x", complex(1, 1))
+    check("complex type error", False, "no exception")
+except TypeError as e:
+    check("complex type error", "complex" in str(e), str(e))
+
+# test_custom_exception (exceptionClass: subclass of ValueError, raisable from Zig)
+check("custom exception registered", isinstance(m.DemoError, type))
+check("custom exception subclasses ValueError", issubclass(m.DemoError, ValueError))
+check("custom exception __module__", m.DemoError.__module__ == "pyo3zig_demo")
+check("check_positive ok path", m.check_positive(5) == 5)
+try:
+    m.check_positive(-1)
+    check("custom exception raised", False, "no exception")
+except m.DemoError as e:
+    check("custom exception raised", "non-negative" in str(e), str(e))
+
+# test_zig_inheritance (a Zig class inheriting from another Zig class)
+_dog = m.Dog(4, True)
+check("derived isinstance of base", isinstance(_dog, m.Animal))
+check("derived issubclass of base", issubclass(m.Dog, m.Animal))
+check("inherited base method", _dog.legs_count() == 4)
+check("inherited base field", _dog.legs == 4)
+check("derived own method", _dog.bark() is True)
+check("derived own field", _dog.good is True)
+check("base instance not derived", not isinstance(m.Animal(2), m.Dog))
+
+
+# A Python class can further subclass the derived Zig class.
+class Puppy(m.Dog):
+    def speak(self):
+        return "yip"
+
+
+_pup = Puppy(3, False)
+check("python subclass of derived: inherited", _pup.legs_count() == 3)
+check("python subclass of derived: own zig method", _pup.bark() is False)
+check("python subclass of derived: python method", _pup.speak() == "yip")
+check("python subclass isinstance chain", isinstance(_pup, m.Dog) and isinstance(_pup, m.Animal))
+
+# test_hashmap (dict <-> std.StringHashMap / AutoHashMap)
+check("dict -> StringHashMap sum", m.dict_sum({"a": 1, "b": 2, "c": 3}) == 6)
+check("dict -> AutoHashMap lookup hit", m.lookup_zero({0: 99, 1: 1}) == 99)
+check("dict -> AutoHashMap lookup miss", m.lookup_zero({5: 1}) == -1)
+try:
+    m.dict_sum([1, 2])
+    check("dict arg type error", False, "no exception")
+except TypeError as e:
+    check("dict arg type error", "dict" in str(e), str(e))
+
+# test_set_output (PySet wrapper -> Python set)
+_uniq = m.unique_bytes(b"aabbc")
+check("set output type", isinstance(_uniq, set))
+check("set output value", _uniq == {97, 98, 99})
+
+# test_pathlike (os.PathLike argument coerced via os.fspath)
+import pathlib  # noqa: E402
+
+check("Path argument coerced", m.greet(pathlib.PurePath("/tmp/x")) == "Hello, /tmp/x!")
+
+# test_variadic (pyFnRaw: raw *args / **kwargs)
+check("variadic no args", m.sum_all() == 0)
+check("variadic positional", m.sum_all(1, 2, 3) == 6)
+check("variadic with kwarg bonus", m.sum_all(1, 2, bonus=10) == 13)
+
+# test_edge_cases (boundary inputs for the 1.0 features)
+# dict <-> HashMap edges
+check("empty dict -> HashMap sum", m.dict_sum({}) == 0)
+check("empty dict -> AutoHashMap miss", m.lookup_zero({}) == -1)
+check("large dict -> HashMap", m.dict_sum({str(i): i for i in range(1000)}) == sum(range(1000)))
+check("AutoHashMap negative key value", m.lookup_zero({0: -5, 2: 9}) == -5)
+try:
+    m.lookup_zero({"notint": 1})
+    check("AutoHashMap non-int key errors", False, "no exception")
+except TypeError:
+    check("AutoHashMap non-int key errors", True)
+# set output edges
+check("set output empty", m.unique_bytes(b"") == set())
+check("set output single", m.unique_bytes(b"\x00") == {0})
+check("set output full byte range", m.unique_bytes(bytes(range(256))) == set(range(256)))
+# complex edges
+check("complex zero", m.cmul(complex(0, 0), complex(1, 1)) == 0)
+check("complex negative", m.cmul(complex(-1, -1), complex(1, 0)) == complex(-1, -1))
+check("complex from bool (int subclass)", m.cmul(True, complex(2, 0)) == complex(2, 0))
+# variadic edges
+check("variadic kwargs only", m.sum_all(bonus=5) == 5)
+check("variadic many args", m.sum_all(*range(100)) == sum(range(100)))
+# pathlike edges
+check("Path via concrete Path", m.greet(pathlib.Path("/a/b")) == "Hello, /a/b!")
+check("str still works (not coerced)", m.greet("plain") == "Hello, plain!")
+check("bytes still works", m.greet(b"raw") == "Hello, raw!")
+# inheritance edges
+_d2 = m.Dog(0, False)
+check("derived zero field", _d2.legs_count() == 0 and _d2.bark() is False)
+check("derived not same as base instance", not isinstance(m.Animal(1), m.Dog))
+check("custom exception catchable as Exception", issubclass(m.DemoError, Exception))
 
 # test_call_kwargs
 adder = m.Adder(10)

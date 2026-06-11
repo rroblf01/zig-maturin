@@ -20,15 +20,19 @@ pub const funcStub = stubgen.funcStub;
 pub const moduleStub = stubgen.moduleStub;
 pub const methodStub = stubgen.methodStub;
 pub const classStub = stubgen.classStub;
+pub const rawFuncStub = stubgen.rawFuncStub;
+pub const exceptionStub = stubgen.exceptionStub;
 
 pub const pyModule = module.pyModule;
 pub const exportModule = module.exportModule;
 pub const PyClass = pyclass.PyClass;
 pub const enumClass = pyclass.enumClass;
+pub const exceptionClass = pyclass.exceptionClass;
 pub const PyCell = pycell.PyCell;
 pub const pyFn = funcwrap.pyFn;
 pub const pyFnNamed = funcwrap.pyFnNamed;
 pub const pyFnKw = funcwrap.pyFnKw;
+pub const pyFnRaw = funcwrap.pyFnRaw;
 pub const wrap = funcwrap.wrap;
 pub const wrapNamed = funcwrap.wrapNamed;
 pub const wrapMethodNamed = pyclass.wrapMethodNamed;
@@ -43,6 +47,8 @@ pub const PyBool = types.PyBool;
 pub const PyList = types.PyList;
 pub const PyDict = types.PyDict;
 pub const PyTuple = types.PyTuple;
+pub const PySet = types.PySet;
+pub const PyFrozenSet = types.PyFrozenSet;
 pub const PyBytes = types.PyBytes;
 pub const datetime = @import("datetime.zig");
 pub const DateTime = datetime.DateTime;
@@ -74,6 +80,14 @@ pub const Py_DECREF = zm.Py_DECREF;
 pub const Py_XINCREF = zm.Py_XINCREF;
 pub const Py_XDECREF = zm.Py_XDECREF;
 pub const Py_None = zm.Py_None;
+
+// Raw container/scalar accessors, for `pyFnRaw` variadic functions that walk the
+// argument tuple / keyword dict directly.
+pub const PyTuple_Size = zm.PyTuple_Size;
+pub const PyTuple_GetItem = zm.PyTuple_GetItem;
+pub const PyDict_GetItemString = zm.PyDict_GetItemString;
+pub const PyLong_FromLongLong = zm.PyLong_FromLongLong;
+pub const PyLong_AsLongLong = zm.PyLong_AsLongLong;
 
 pub const PyObject = zm.PyObject;
 pub const PyMethodDef = zm.PyMethodDef;

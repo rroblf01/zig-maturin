@@ -4,6 +4,84 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-06-11
+
+First stable release. The public Zig API (`pyo3zig`, imported as `pz`) and the
+`zig_maturin` build tooling are now covered by semantic versioning: breaking
+changes to either wait for a 2.0.
+
+### Added
+- **Toolchain-free `pip install`**: when no `zig` is on PATH, the PEP 517 backend
+  pulls in the `ziglang` wheel (a pinned Zig binary) automatically and builds via
+  `python -m ziglang`, so `pip install .` works with no system toolchain.
+  Developers who already have Zig pay nothing. A `zig-maturin build` from the CLI
+  uses the same fallback.
+- **Nested submodules**: `.submodules = .{ pz.pyModule("sub", .{...}), ... }` in a
+  module config creates child modules, sets them as attributes of the parent, and
+  registers them in `sys.modules` under the dotted `parent.child` name (with a
+  fully-qualified `__name__`), so both `parent.sub` and `import parent.sub` work.
+- **`complex` conversion**: Zig's `std.math.Complex(f64)` / `Complex(f32)` map
+  to/from Python `complex` as arguments and return values (an `int`/`float`
+  argument coerces, matching Python's own `complex()`).
+- **`zig-maturin build --abi3 <X.Y>`** CLI flag: build a stable-ABI wheel without
+  editing `pyproject.toml`.
+- **Custom exception types** (`pz.exceptionClass("mod.MyError", base)`): register
+  a Python exception subclass in a module's `.classes` and raise it from Zig
+  (`MyError.raise("msg")`). `base` is a builtin exception getter (e.g.
+  `pz.PyExc_ValueError`) or `null` for `Exception`.
+- **Variadic functions** (`pz.pyFnRaw("name", fn)`): a function taking
+  `(args: ?*PyObject, kwargs: ?*PyObject)` receives the raw argument tuple and
+  keyword dict for `*args` / `**kwargs` handling.
+- **Computed properties** documented: `.properties = &.{ .{ .name, .get, .set } }`
+  exposes getter/setter attributes via `PyGetSetDef` (`set` optional → read-only).
+- **`os.PathLike` arguments**: a `pathlib.Path` (anything implementing
+  `__fspath__`) is accepted wherever a `[]const u8` string is expected, coerced
+  via `os.fspath` and copied into the call arena.
+- **Mixed Python/Zig package layout**: when `<python-source>/<module>/` is a
+  package, the wheel ships its pure-Python files and nests the compiled extension
+  inside it (`module/module.so`, re-exported from `__init__.py`).
+- **PEP 660 editable installs**: `pip install -e .` works via a `build_editable`
+  hook (debug build; re-install to recompile after Zig changes).
+- **`zig-maturin generate-ci`**: writes a GitHub Actions workflow that builds
+  wheels across Linux/macOS/Windows × CPython versions and publishes to PyPI on a
+  tag (Trusted Publishing). Toolchain-free (uses the `ziglang` wheel).
+- **Richer type stubs**: the generated `.pyi` now reflects `complex`, `set` /
+  `frozenset` / `dict`, computed `@property` accessors (`classStub`
+  `.properties`), variadic functions (`*args`/`**kwargs` via `moduleStub`
+  `.raw`), custom exception subclasses (`pz.exceptionStub("Name", "Base")`), and
+  base classes (`classStub` `.base`).
+- **`dict`↔`std.HashMap` conversion**: a Python `dict` maps to/from a managed
+  `std.StringHashMap(V)` / `std.AutoHashMap(K, V)` as arguments and return values
+  (argument maps are backed by the per-call arena). Keys/values convert by their
+  element types.
+- **`set` / `frozenset` output**: `pz.PySet` and `pz.PyFrozenSet` wrapper types
+  build Python sets from Zig (like `pz.PyList` / `pz.PyDict`).
+- **Zig-class inheritance** (`.base = SomeZigClass`): a `PyClass` can inherit from
+  another `PyClass` (`Py_tp_base`). The derived struct embeds the base struct as
+  its first field; the base's methods and field accessors are inherited and
+  operate correctly on derived instances, `isinstance`/`issubclass` work, and a
+  Python class can further subclass the derived type.
+- **Sub-interpreter support**: modules now use multi-phase init (PEP 489) and
+  declare `Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED`, so the extension imports and
+  runs in (shared-GIL) sub-interpreters — which single-phase modules cannot.
+  Type objects and the cached `datetime`/awaitable/exception objects are keyed
+  per interpreter, so each interpreter gets its own (an object is never shared
+  across interpreters). Verified end-to-end (`tests/test_subinterp.py`): classes,
+  operators, inheritance, container conversions, `datetime` and custom exceptions
+  all work in sub-interpreters, and several interpreters coexist.
+
+### Not yet
+- **Free-threading (no-GIL, PEP 703)**: the C shim opts in with
+  `Py_MOD_GIL_NOT_USED` and the wheel is tagged `cp3Xt`, but the free-threaded
+  interpreter has a wider `PyObject` header (32 bytes vs 16), so the Zig-side
+  `PyModuleDef` / instance layouts — currently the regular-ABI structs — must be
+  given a free-threaded-conditional definition before the extension can load on
+  `python3.13t` / `python3.14t`. Regular (with-GIL) builds are unaffected.
+- **Per-interpreter GIL** (`Py_MOD_PER_INTERPRETER_GIL_SUPPORTED`, true parallel
+  interpreters): the per-interpreter caches are serialized by the shared GIL; the
+  own-GIL mode would need them lock-protected. Shared-GIL sub-interpreters are
+  fully supported.
+
 ## [0.3.0] - 2026-06-10
 
 ### Added

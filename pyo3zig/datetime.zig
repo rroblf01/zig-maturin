@@ -1,5 +1,6 @@
 const std = @import("std");
 const zm = @import("zig-maturin");
+const interp = @import("interp.zig");
 
 /// A naive calendar date-time, converted to/from Python's `datetime.datetime`.
 /// Use it as a function argument or return type. Conversion goes through the
@@ -15,17 +16,26 @@ pub const DateTime = struct {
     microsecond: u32 = 0,
 };
 
-// Cached `datetime.datetime` class (a permanent reference; the GIL serializes
-// the lazy initialization).
-var dt_class: ?*zm.PyObject = null;
+// Cached `datetime.datetime` class, per interpreter (an object belongs to the
+// interpreter that imported `datetime`, so it can't be shared across
+// sub-interpreters). The GIL serializes the lazy init.
+var dt_cache: interp.Cache(16) = .{};
 
 fn datetimeClass() ?*zm.PyObject {
-    if (dt_class) |c| return c;
+    if (dt_cache.get()) |c| return c;
     const mod = zm.PyImport_ImportModule("datetime") orelse return null;
     defer zm.Py_XDECREF(mod);
     const cls = zm.PyObject_GetAttrString(mod, "datetime") orelse return null;
-    dt_class = cls; // keep the reference for the process lifetime
+    dt_cache.put(cls); // permanent (process-lifetime) reference for this interpreter
     return cls;
+}
+
+/// Drop the current interpreter's cached datetime class (module teardown). We
+/// own this reference (from PyObject_GetAttrString), so release it before
+/// clearing — otherwise each torn-down interpreter leaks one class reference.
+pub fn clearCache() void {
+    if (dt_cache.get()) |c| zm.Py_XDECREF(c);
+    dt_cache.clear();
 }
 
 fn intAttr(obj: ?*zm.PyObject, name: [*:0]const u8) ?i64 {

@@ -6,6 +6,7 @@ pub fn pyType(comptime T: type) []const u8 {
     if (T == void) return "None";
     if (T == ?*zm.PyObject or T == *zm.PyObject) return "object";
     if (T == @import("datetime.zig").DateTime) return "datetime.datetime";
+    if (T == std.math.Complex(f64) or T == std.math.Complex(f32)) return "complex";
 
     // Wrapper types expose `borrow`; map the known ones by name.
     const tn = @typeName(T);
@@ -17,6 +18,8 @@ pub fn pyType(comptime T: type) []const u8 {
     if (std.mem.endsWith(u8, tn, "PyList")) return "list";
     if (std.mem.endsWith(u8, tn, "PyDict")) return "dict";
     if (std.mem.endsWith(u8, tn, "PyTuple")) return "tuple";
+    if (std.mem.endsWith(u8, tn, "PyFrozenSet")) return "frozenset";
+    if (std.mem.endsWith(u8, tn, "PySet")) return "set";
 
     switch (@typeInfo(T)) {
         .bool => return "bool",
@@ -66,15 +69,36 @@ pub fn funcStub(
     return sig ++ ") -> " ++ ret ++ ": ...";
 }
 
+/// A `.pyi` `def` line for a variadic (`pz.pyFnRaw`) function: the two
+/// `?*PyObject` parameters become `*args` / `**kwargs`.
+pub fn rawFuncStub(comptime name: []const u8, comptime func: anytype) []const u8 {
+    const fn_info = @typeInfo(@TypeOf(func)).@"fn";
+    const ret = if (fn_info.return_type) |r| pyType(r) else "None";
+    return "def " ++ name ++ "(*args: object, **kwargs: object) -> " ++ ret ++ ": ...";
+}
+
 /// Concatenate `def` lines into a full stub module. `entries` is a tuple of
-/// `.{ .name = "f", .func = f, .args = &.{...} }` (args optional).
+/// `.{ .name = "f", .func = f, .args = &.{...} }` (args optional). Set
+/// `.raw = true` on an entry for a variadic (`*args`/`**kwargs`) function.
 pub fn moduleStub(comptime entries: anytype) []const u8 {
     comptime var out: []const u8 = "";
     inline for (entries) |e| {
-        const names: []const []const u8 = if (@hasField(@TypeOf(e), "args")) e.args else &.{};
-        out = out ++ funcStub(e.name, e.func, names) ++ "\n";
+        const is_raw = @hasField(@TypeOf(e), "raw") and e.raw;
+        if (is_raw) {
+            out = out ++ rawFuncStub(e.name, e.func) ++ "\n";
+        } else {
+            const names: []const []const u8 = if (@hasField(@TypeOf(e), "args")) e.args else &.{};
+            out = out ++ funcStub(e.name, e.func, names) ++ "\n";
+        }
     }
     return out;
+}
+
+/// A `.pyi` `class` line for a custom exception type (`pz.exceptionClass`):
+/// `class Name(Base): ...`. `base` is the Python base spelling, e.g.
+/// "ValueError" or "Exception".
+pub fn exceptionStub(comptime name: []const u8, comptime base: []const u8) []const u8 {
+    return "class " ++ name ++ "(" ++ base ++ "): ...\n\n";
 }
 
 /// A `.pyi` method line: like `funcStub` but indented and with an implicit
@@ -98,22 +122,44 @@ pub fn methodStub(
 
 /// A `.pyi` `class` block for a Zig class struct. `spec` is
 /// `.{ .name = "Vec2", .type = Vec2, .init = &.{"x","y"},
-///     .methods = .{ .{ .name = "dot", .func = dot, .args = &.{...} }, ... } }`.
-/// `.init` and `.methods` are optional. Struct fields become annotated class
-/// attributes; computed properties aren't reflected (declare them by hand if
-/// needed).
+///     .methods = .{ .{ .name = "dot", .func = dot, .args = &.{...} }, ... },
+///     .properties = .{ .{ .name = "length_sq", .get = fn }, ... } }`.
+/// `.init`, `.methods` and `.properties` are optional. Struct fields become
+/// annotated class attributes; properties become `@property` accessors typed
+/// from the getter's return type.
 pub fn classStub(comptime spec: anytype) []const u8 {
     const T = spec.type;
     const fields = std.meta.fields(T);
     const has_init = @hasField(@TypeOf(spec), "init");
     const has_methods = @hasField(@TypeOf(spec), "methods");
+    const has_properties = @hasField(@TypeOf(spec), "properties");
+    // `.base = "Animal"` emits `class Name(Base):` for an inheriting class.
+    const base_suffix = if (@hasField(@TypeOf(spec), "base")) "(" ++ spec.base ++ ")" else "";
 
-    comptime var out: []const u8 = "class " ++ spec.name ++ ":\n";
+    comptime var out: []const u8 = "class " ++ spec.name ++ base_suffix ++ ":\n";
     comptime var has_body = false;
 
-    inline for (fields) |f| {
-        out = out ++ "    " ++ f.name ++ ": " ++ pyType(f.type) ++ "\n";
-        has_body = true;
+    // When inheriting (`.base`), the first field is the embedded base struct;
+    // its attributes are inherited, so skip it here.
+    const field_skip = if (@hasField(@TypeOf(spec), "base")) 1 else 0;
+    inline for (fields, 0..) |f, i| {
+        if (i >= field_skip) {
+            out = out ++ "    " ++ f.name ++ ": " ++ pyType(f.type) ++ "\n";
+            has_body = true;
+        }
+    }
+
+    if (has_properties) {
+        inline for (spec.properties) |prop| {
+            const gi = @typeInfo(@TypeOf(prop.get)).@"fn";
+            const ret = if (gi.return_type) |r| pyType(r) else "object";
+            out = out ++ "    @property\n    def " ++ prop.name ++ "(self) -> " ++ ret ++ ": ...\n";
+            if (@hasField(@TypeOf(prop), "set")) {
+                out = out ++ "    @" ++ prop.name ++ ".setter\n    def " ++
+                    prop.name ++ "(self, value: " ++ ret ++ ") -> None: ...\n";
+            }
+            has_body = true;
+        }
     }
 
     if (has_init) {
