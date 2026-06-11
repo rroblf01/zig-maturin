@@ -505,6 +505,22 @@ fn next_color(c: Color) Color {
     };
 }
 
+// datetime.datetime crosses the boundary as a pz.DateTime value.
+fn make_dt(year: i64, month: i64, day: i64) pz.DateTime {
+    return .{ .year = @intCast(year), .month = @intCast(month), .day = @intCast(day) };
+}
+
+fn dt_year(dt: pz.DateTime) i64 {
+    return dt.year;
+}
+
+// Round-trip: bump the day by one (no month rollover — demo only).
+fn next_day(dt: pz.DateTime) pz.DateTime {
+    var d = dt;
+    d.day += 1;
+    return d;
+}
+
 // A class holding a Python object reference -> participates in cyclic GC. The
 // framework owns the `next` reference, visits it in tp_traverse, and clears it
 // in tp_clear, so reference cycles are collectable.
@@ -660,6 +676,9 @@ const STUB = pz.moduleStub(.{
     .{ .name = "power", .func = power, .args = &.{ "base", "exp" } },
     .{ .name = "sum_bytes", .func = sum_bytes, .args = &.{"data"} },
     .{ .name = "next_color", .func = next_color, .args = &.{"c"} },
+    .{ .name = "make_dt", .func = make_dt, .args = &.{ "year", "month", "day" } },
+    .{ .name = "dt_year", .func = dt_year, .args = &.{"dt"} },
+    .{ .name = "next_day", .func = next_day, .args = &.{"dt"} },
 });
 
 // Class stubs so type checkers see the classes too.
@@ -724,6 +743,9 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("big_mul", big_mul),
         pz.pyFnNamed("sum_bytes", sum_bytes),
         pz.pyFnNamed("next_color", next_color),
+        pz.pyFnNamed("make_dt", make_dt),
+        pz.pyFnNamed("dt_year", dt_year),
+        pz.pyFnNamed("next_day", next_day),
     },
     .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass },
 });

@@ -5,6 +5,8 @@ const conversion = @import("conversion.zig");
 pub fn pyModule(comptime name: [:0]const u8, comptime config: anytype) type {
     return struct {
         pub fn init() callconv(.c) ?*zm.PyObject {
+            // Initialize the datetime C-API capsule (no-op if unused; cheap).
+            _ = zm.PyDateTime_Import();
             const allocator = std.heap.c_allocator;
             const funcs: []const zm.PyMethodDef = if (@hasField(@TypeOf(config), "functions")) config.functions else &.{};
 

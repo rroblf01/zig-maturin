@@ -1,6 +1,23 @@
 #include <Python.h>
+#include <datetime.h>
 #include <setjmp.h>
 #include <string.h>
+
+/* --- datetime C-API -------------------------------------------------------
+ * PyDateTime_* are macros over a capsule pointer that must be initialized once
+ * with PyDateTime_IMPORT before any use. The module init calls the import. */
+int pyo3zig_PyDateTime_Import(void) { PyDateTime_IMPORT; return PyDateTimeAPI ? 0 : -1; }
+int pyo3zig_PyDateTime_Check(PyObject* o) { return PyDateTime_Check(o); }
+PyObject* pyo3zig_DateTime_New(int y, int mo, int d, int h, int mi, int s, int us) {
+    return PyDateTime_FromDateAndTime(y, mo, d, h, mi, s, us);
+}
+int pyo3zig_DateTime_year(PyObject* o) { return PyDateTime_GET_YEAR(o); }
+int pyo3zig_DateTime_month(PyObject* o) { return PyDateTime_GET_MONTH(o); }
+int pyo3zig_DateTime_day(PyObject* o) { return PyDateTime_GET_DAY(o); }
+int pyo3zig_DateTime_hour(PyObject* o) { return PyDateTime_DATE_GET_HOUR(o); }
+int pyo3zig_DateTime_minute(PyObject* o) { return PyDateTime_DATE_GET_MINUTE(o); }
+int pyo3zig_DateTime_second(PyObject* o) { return PyDateTime_DATE_GET_SECOND(o); }
+int pyo3zig_DateTime_microsecond(PyObject* o) { return PyDateTime_DATE_GET_MICROSECOND(o); }
 
 /* --- Panic safety net -----------------------------------------------------
  * Zig has no stack unwinding, so a panic would normally abort the whole

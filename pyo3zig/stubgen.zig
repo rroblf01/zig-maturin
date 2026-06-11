@@ -5,6 +5,7 @@ const zm = @import("zig-maturin");
 pub fn pyType(comptime T: type) []const u8 {
     if (T == void) return "None";
     if (T == ?*zm.PyObject or T == *zm.PyObject) return "object";
+    if (T == @import("datetime.zig").DateTime) return "datetime.datetime";
 
     // Wrapper types expose `borrow`; map the known ones by name.
     const tn = @typeName(T);

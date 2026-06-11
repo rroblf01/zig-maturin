@@ -78,6 +78,21 @@ pub extern fn PyBytes_AsString(?*PyObject) callconv(.c) [*]u8;
 pub extern fn PyBytes_Size(?*PyObject) callconv(.c) isize;
 pub extern fn PyBytes_AsStringAndSize(?*PyObject, *[*]u8, *isize) callconv(.c) c_int;
 
+// datetime C-API (capsule-backed; pyo3zig_PyDateTime_Import must run first).
+pub extern fn pyo3zig_PyDateTime_Import() callconv(.c) c_int;
+pub extern fn pyo3zig_PyDateTime_Check(?*PyObject) callconv(.c) c_int;
+pub extern fn pyo3zig_DateTime_New(c_int, c_int, c_int, c_int, c_int, c_int, c_int) callconv(.c) ?*PyObject;
+pub extern fn pyo3zig_DateTime_year(?*PyObject) callconv(.c) c_int;
+pub extern fn pyo3zig_DateTime_month(?*PyObject) callconv(.c) c_int;
+pub extern fn pyo3zig_DateTime_day(?*PyObject) callconv(.c) c_int;
+pub extern fn pyo3zig_DateTime_hour(?*PyObject) callconv(.c) c_int;
+pub extern fn pyo3zig_DateTime_minute(?*PyObject) callconv(.c) c_int;
+pub extern fn pyo3zig_DateTime_second(?*PyObject) callconv(.c) c_int;
+pub extern fn pyo3zig_DateTime_microsecond(?*PyObject) callconv(.c) c_int;
+pub fn PyDateTime_Import() c_int {
+    return pyo3zig_PyDateTime_Import();
+}
+
 // weakref clearing: must run in a custom tp_dealloc before teardown so any
 // live weak references to the object are invalidated.
 pub extern fn PyObject_ClearWeakRefs(?*PyObject) callconv(.c) void;

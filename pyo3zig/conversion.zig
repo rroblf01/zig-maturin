@@ -2,6 +2,7 @@ const std = @import("std");
 const zm = @import("zig-maturin");
 const refcount = @import("refcount.zig");
 const pycell = @import("pycell.zig");
+const datetime = @import("datetime.zig");
 
 pub const ConversionError = error{
     PythonTypeError,
@@ -87,6 +88,7 @@ pub fn toPyObject(value: anytype) ConversionError!?*zm.PyObject {
     if (T == ?*zm.PyObject or T == *zm.PyObject) {
         return value;
     }
+    if (T == datetime.DateTime) return datetime.toPy(value);
     switch (@typeInfo(T)) {
         .int => {
             const info = @typeInfo(T).int;
@@ -228,6 +230,8 @@ pub fn fromPyObject(comptime T: type, obj: ?*zm.PyObject, allocator: std.mem.All
     }
 
     if (obj == null) return error.PythonValueError;
+
+    if (T == datetime.DateTime) return datetime.fromPy(obj) orelse error.PythonTypeError;
 
     switch (@typeInfo(T)) {
         .int => |info| {

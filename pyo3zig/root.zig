@@ -43,6 +43,8 @@ pub const PyList = types.PyList;
 pub const PyDict = types.PyDict;
 pub const PyTuple = types.PyTuple;
 pub const PyBytes = types.PyBytes;
+pub const datetime = @import("datetime.zig");
+pub const DateTime = datetime.DateTime;
 
 pub const setError = errors.setError;
 pub const newException = errors.newException;
