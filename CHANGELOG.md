@@ -69,11 +69,20 @@ changes to either wait for a 2.0.
   its first field; the base's methods and field accessors are inherited and
   operate correctly on derived instances, `isinstance`/`issubclass` work, and a
   Python class can further subclass the derived type.
+- **Sub-interpreter support**: modules now use multi-phase init (PEP 489) and
+  declare `Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED`, so the extension imports and
+  runs in (shared-GIL) sub-interpreters — which single-phase modules cannot.
+  Type objects and the cached `datetime`/awaitable/exception objects are keyed
+  per interpreter, so each interpreter gets its own (an object is never shared
+  across interpreters). Verified end-to-end (`tests/test_subinterp.py`): classes,
+  operators, inheritance, container conversions, `datetime` and custom exceptions
+  all work in sub-interpreters, and several interpreters coexist.
 
 ### Not yet
-- **Sub-interpreters**: modules use single-phase init with global state
-  (`m_size = -1`); per-interpreter state via multi-phase init (PEP 489) is future
-  work.
+- **Per-interpreter GIL** (`Py_MOD_PER_INTERPRETER_GIL_SUPPORTED`, true parallel
+  interpreters): the per-interpreter caches are serialized by the shared GIL; the
+  own-GIL mode would need them lock-protected. Shared-GIL sub-interpreters are
+  fully supported.
 
 ## [0.3.0] - 2026-06-10
 

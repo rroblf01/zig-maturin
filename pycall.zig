@@ -187,6 +187,9 @@ pub extern fn PyOS_FSPath(?*PyObject) callconv(.c) ?*PyObject;
 // Borrowed reference to the interpreter's sys.modules dict (for submodule
 // registration under a dotted "parent.child" name).
 pub extern fn PyImport_GetModuleDict() callconv(.c) ?*PyObject;
+// Current interpreter (opaque pointer); keys per-interpreter caches so a type
+// created in one sub-interpreter is never reused in another.
+pub extern fn PyInterpreterState_Get() callconv(.c) ?*anyopaque;
 
 // Object utilities
 pub extern fn PyObject_GetAttrString(?*PyObject, [*:0]const u8) callconv(.c) ?*PyObject;

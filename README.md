@@ -114,6 +114,20 @@ automatically — nothing to configure. The shim uses out-of-line refcounting an
 per-thread state, and its process-lifetime caches are published with atomic
 compare-exchange / `PyMutex`, so it is free-threading clean.
 
+### Sub-interpreters
+
+Modules use multi-phase init (PEP 489) and declare support for sub-interpreters,
+so the extension can be imported into more than one interpreter (which
+single-phase modules cannot). Type objects and the cached `datetime` / awaitable
+/ exception objects are keyed per interpreter — each interpreter gets its own, so
+nothing is shared across the interpreter boundary. Classes, operators,
+inheritance, container conversions, `datetime` and custom exceptions all work in
+a sub-interpreter (see `tests/test_subinterp.py`).
+
+Shared-GIL ("legacy") sub-interpreters are fully supported. Per-interpreter-GIL
+(truly parallel interpreters) is not yet declared — the per-interpreter caches
+rely on the shared GIL for serialization.
+
 ## Stability
 
 `1.0.0` is the first stable release. The public Zig API (`pyo3zig`, imported as

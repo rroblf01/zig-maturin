@@ -41,4 +41,4 @@ zig-source = "pyo3zig_example.zig"
 testpaths = ["tests"]
 # test_pyo3zig.py is a standalone runner (top-level sys.exit); run it via
 # `python tests/test_pyo3zig.py` or `zig build test`, not pytest collection.
-addopts = "--ignore=tests/test_pyo3zig.py"
+addopts = "--ignore=tests/test_pyo3zig.py --ignore=tests/test_subinterp.py"

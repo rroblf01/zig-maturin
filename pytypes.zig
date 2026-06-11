@@ -51,6 +51,21 @@ pub const PyModuleDef_HEAD_INIT = PyModuleDef_Base{
     .m_copy = null,
 };
 
+// Multi-phase init (PEP 489): a PyModuleDef.m_slots array of these, terminated
+// by a {0, null} entry.
+pub const PyModuleDef_Slot = extern struct {
+    slot: c_int,
+    value: ?*anyopaque,
+};
+pub const Py_mod_create: c_int = 1;
+pub const Py_mod_exec: c_int = 2;
+pub const Py_mod_multiple_interpreters: c_int = 3;
+pub const Py_mod_gil: c_int = 4;
+// Values for the Py_mod_multiple_interpreters slot (used as the `value` pointer).
+pub const Py_MOD_MULTIPLE_INTERPRETERS_NOT_SUPPORTED: ?*anyopaque = @ptrFromInt(0);
+pub const Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED: ?*anyopaque = @ptrFromInt(1);
+pub const Py_MOD_PER_INTERPRETER_GIL_SUPPORTED: ?*anyopaque = @ptrFromInt(2);
+
 pub const PyGILState_STATE = c_int;
 pub const PyGILState_LOCKED: PyGILState_STATE = 0;
 pub const PyGILState_UNLOCKED: PyGILState_STATE = 1;

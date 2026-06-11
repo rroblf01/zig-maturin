@@ -452,11 +452,34 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const needs_finalize = has_deinit or is_gc;
     const can_subclass = true;
 
-    // Cached type object (set once the type is built), used for isinstance
-    // checks in operator dispatch so subclasses dispatch correctly.
+    // Per-interpreter cache of this class's type object. Keyed by interpreter so
+    // a type created in one (sub-)interpreter is never reused in another (which
+    // would be a hard error). Used for isinstance in operator dispatch and to
+    // share the base type within one interpreter's module init (inheritance).
+    // The shared GIL serializes access (see the module's multi-phase slots).
     const TypeRef = struct {
-        const Owner = T; // force a distinct type (and static var) per class
-        var obj: ?*zm.PyObject = null;
+        const Owner = T; // force a distinct type (and static vars) per class
+        const Entry = struct { interp: ?*anyopaque = null, obj: ?*zm.PyObject = null };
+        var entries: [16]Entry = .{Entry{}} ** 16;
+
+        fn get() ?*zm.PyObject {
+            const cur = zm.PyInterpreterState_Get();
+            for (&entries) |*e| {
+                if (e.interp == cur) return e.obj;
+            }
+            return null;
+        }
+        fn put(o: ?*zm.PyObject) void {
+            const cur = zm.PyInterpreterState_Get();
+            for (&entries) |*e| {
+                if (e.interp == null or e.interp == cur) {
+                    e.* = .{ .interp = cur, .obj = o };
+                    return;
+                }
+            }
+            // Table full (16+ live interpreters): reuse the first slot.
+            entries[0] = .{ .interp = cur, .obj = o };
+        }
     };
 
     // tp_finalize: runs once before deallocation (CPython saves/restores any
@@ -827,7 +850,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         // the cached type object so subclasses (with a different tp_name) still
         // dispatch operators correctly.
         fn isOurs(obj: ?*zm.PyObject) bool {
-            if (TypeRef.obj) |ty| return zm.PyObject_IsInstance(obj, ty) == 1;
+            if (TypeRef.get()) |ty| return zm.PyObject_IsInstance(obj, ty) == 1;
             return std.mem.eql(u8, std.mem.span(zm.pz_type_name(obj)), short_name);
         }
         fn convertResult(cls: ?*zm.PyObject, result: anytype) ?*zm.PyObject {
@@ -1487,9 +1510,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
 
     const TypeBuilder = struct {
         fn getTypeObject() ?*zm.PyObject {
-            // Return the already-built type so repeated calls (e.g. a derived
-            // class referencing this one as its base) share one type object.
-            if (TypeRef.obj) |existing| return existing;
+            // Return this interpreter's already-built type so repeated calls
+            // (e.g. a derived class referencing this one as its base) share one
+            // type object within the interpreter.
+            if (TypeRef.get()) |existing| return existing;
             const fields = comptime std.meta.fields(T);
             // The embedded base field (when `.base` is set) is not exposed as a
             // getset, so it doesn't count toward the field accessors.
@@ -2046,7 +2070,7 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             };
 
             const result = zm.PyType_FromSpec(&spec);
-            TypeRef.obj = result;
+            TypeRef.put(result);
             return result;
         }
     };
@@ -2118,8 +2142,9 @@ pub fn enumClass(comptime E: type, comptime name: [:0]const u8) type {
 ///     // raise from Zig: MyError.raise("something went wrong");
 pub fn exceptionClass(comptime qualified_name: [:0]const u8, comptime base_fn: anytype) type {
     return struct {
-        // Borrowed for the process: the module attribute keeps the type alive.
-        var cached: ?*zm.PyObject = null;
+        // Per-interpreter cache: each interpreter that imports the module gets
+        // its own exception type. Borrowed (the module attribute keeps it alive).
+        var cache: @import("interp.zig").Cache(16) = .{};
 
         pub fn py_type_obj() ?*zm.PyObject {
             const base: ?*zm.PyObject = if (@TypeOf(base_fn) == @TypeOf(null)) null else base_fn();
@@ -2128,7 +2153,7 @@ pub fn exceptionClass(comptime qualified_name: [:0]const u8, comptime base_fn: a
                 base,
                 null,
             ) orelse return null;
-            cached = t;
+            cache.put(t);
             return t;
         }
         pub fn class_name() [*:0]const u8 {
@@ -2136,13 +2161,13 @@ pub fn exceptionClass(comptime qualified_name: [:0]const u8, comptime base_fn: a
             const short = if (dot) |d| qualified_name[d + 1 ..] else qualified_name[0..];
             return @as([*:0]const u8, @ptrCast(short.ptr));
         }
-        /// The created exception type object (null before module init).
+        /// This interpreter's exception type object (null before module init).
         pub fn get() ?*zm.PyObject {
-            return cached;
+            return cache.get();
         }
         /// Raise this exception with a message (sets the Python error indicator).
         pub fn raise(msg: [*:0]const u8) void {
-            zm.PyErr_SetString(cached orelse zm.PyExc_Exception(), msg);
+            zm.PyErr_SetString(cache.get() orelse zm.PyExc_Exception(), msg);
         }
     };
 }

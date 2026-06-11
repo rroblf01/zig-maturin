@@ -222,6 +222,33 @@ jobs:
           python -c "import sys; assert not sys._is_gil_enabled(), 'GIL still enabled'"
           python ci/smoke.py
 
+  # Sub-interpreters: build + install the extension, then import and exercise it
+  # inside (shared-GIL) sub-interpreters. A single-phase module would raise on
+  # import here, so a passing run proves the multi-phase init + per-interpreter
+  # type caches work. Needs CPython 3.13+ for the `_interpreters` API.
+  subinterpreters:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Install zig-maturin
+        run: pip install .
+      - name: Build + install the extension
+        run: |
+          zig-maturin build --out dist
+          pip install --find-links dist --no-index pyo3zig_demo
+      - name: Run sub-interpreter E2E
+        run: python tests/test_subinterp.py
+
   # Toolchain-free build: no `zig` on PATH (the runner has none and we add no
   # setup-zig step). The CLI must fall back to the `ziglang` wheel and still
   # produce a working extension — the path a bare `pip install .` takes.

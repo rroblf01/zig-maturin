@@ -162,6 +162,15 @@ pub const PyObject_Repr = pycall.PyObject_Repr;
 pub const PyImport_ImportModule = pycall.PyImport_ImportModule;
 pub const PyImport_GetModuleDict = pycall.PyImport_GetModuleDict;
 pub const PyOS_FSPath = pycall.PyOS_FSPath;
+pub const PyInterpreterState_Get = pycall.PyInterpreterState_Get;
+
+pub const PyModuleDef_Slot = pytypes.PyModuleDef_Slot;
+pub const Py_mod_create = pytypes.Py_mod_create;
+pub const Py_mod_exec = pytypes.Py_mod_exec;
+pub const Py_mod_multiple_interpreters = pytypes.Py_mod_multiple_interpreters;
+pub const Py_mod_gil = pytypes.Py_mod_gil;
+pub const Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED = pytypes.Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED;
+pub const Py_MOD_PER_INTERPRETER_GIL_SUPPORTED = pytypes.Py_MOD_PER_INTERPRETER_GIL_SUPPORTED;
 pub const PyObject_Type = pycall.PyObject_Type;
 pub const PyObject_IsInstance = pycall.PyObject_IsInstance;
 pub const PyObject_CallFunction = pycall.PyObject_CallFunction;

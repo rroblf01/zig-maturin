@@ -1,5 +1,6 @@
 const std = @import("std");
 const zm = @import("zig-maturin");
+const interp = @import("interp.zig");
 
 /// A naive calendar date-time, converted to/from Python's `datetime.datetime`.
 /// Use it as a function argument or return type. Conversion goes through the
@@ -15,21 +16,17 @@ pub const DateTime = struct {
     microsecond: u32 = 0,
 };
 
-// Cached `datetime.datetime` class (a permanent reference). Published with an
-// atomic compare-exchange so the lazy init is correct on a free-threaded
-// (no-GIL) interpreter too, where the GIL no longer serializes first calls. If
-// two threads race, the loser drops its extra reference and uses the winner's.
-var dt_class: ?*zm.PyObject = null;
+// Cached `datetime.datetime` class, per interpreter (an object belongs to the
+// interpreter that imported `datetime`, so it can't be shared across
+// sub-interpreters). The GIL serializes the lazy init.
+var dt_cache: interp.Cache(16) = .{};
 
 fn datetimeClass() ?*zm.PyObject {
-    if (@atomicLoad(?*zm.PyObject, &dt_class, .acquire)) |c| return c;
+    if (dt_cache.get()) |c| return c;
     const mod = zm.PyImport_ImportModule("datetime") orelse return null;
     defer zm.Py_XDECREF(mod);
     const cls = zm.PyObject_GetAttrString(mod, "datetime") orelse return null;
-    if (@cmpxchgStrong(?*zm.PyObject, &dt_class, null, cls, .acq_rel, .acquire)) |won| {
-        zm.Py_XDECREF(cls); // lost the race; use the reference already stored
-        return won;
-    }
+    dt_cache.put(cls); // permanent (process-lifetime) reference for this interpreter
     return cls;
 }
 

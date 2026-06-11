@@ -44,26 +44,45 @@ static PyType_Spec pzra_spec = {
     .flags = Py_TPFLAGS_DEFAULT,
     .slots = pzra_slots,
 };
-static PyObject* pzra_type = NULL; /* created once, kept for the process */
+/* The awaitable type is cached PER INTERPRETER: a heap type belongs to the
+ * interpreter that created it, so it must not be shared across sub-interpreters.
+ * Keyed by PyInterpreterState*; the (shared) GIL serializes access, and the
+ * mutex additionally guards a free-threaded build. */
+typedef struct { PyInterpreterState* interp; PyObject* type; } PzraEntry;
+static PzraEntry pzra_entries[16];
 
 #ifdef Py_GIL_DISABLED
-/* On a free-threaded build there is no GIL serializing the lazy init below, so
- * two threads could race to build pzra_type and leak one. PyMutex is part of
- * the stable ABI from 3.13 (the floor for free-threaded builds). */
 static PyMutex pzra_lock = {0};
 #endif
 
-static PyObject* pzra_new(PyObject* value, int is_stop) {
-    if (!pzra_type) {
-#ifdef Py_GIL_DISABLED
-        PyMutex_Lock(&pzra_lock);
-        if (!pzra_type) pzra_type = PyType_FromSpec(&pzra_spec);
-        PyMutex_Unlock(&pzra_lock);
-#else
-        pzra_type = PyType_FromSpec(&pzra_spec);
-#endif
-        if (!pzra_type) return NULL;
+static PyObject* pzra_get_type(void) {
+    PyInterpreterState* cur = PyInterpreterState_Get();
+    for (int i = 0; i < 16; i++) {
+        if (pzra_entries[i].interp == cur) return pzra_entries[i].type;
     }
+#ifdef Py_GIL_DISABLED
+    PyMutex_Lock(&pzra_lock);
+    for (int i = 0; i < 16; i++) {
+        if (pzra_entries[i].interp == cur) { PyMutex_Unlock(&pzra_lock); return pzra_entries[i].type; }
+    }
+#endif
+    PyObject* t = PyType_FromSpec(&pzra_spec);
+    if (t) {
+        int placed = 0;
+        for (int i = 0; i < 16; i++) {
+            if (pzra_entries[i].interp == NULL) { pzra_entries[i].interp = cur; pzra_entries[i].type = t; placed = 1; break; }
+        }
+        if (!placed) { pzra_entries[0].interp = cur; pzra_entries[0].type = t; }
+    }
+#ifdef Py_GIL_DISABLED
+    PyMutex_Unlock(&pzra_lock);
+#endif
+    return t;
+}
+
+static PyObject* pzra_new(PyObject* value, int is_stop) {
+    PyObject* pzra_type = pzra_get_type();
+    if (!pzra_type) return NULL;
     PzReadyAwaitable* a =
         (PzReadyAwaitable*)PyType_GenericAlloc((PyTypeObject*)pzra_type, 0);
     if (!a) return NULL;
