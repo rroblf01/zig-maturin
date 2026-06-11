@@ -164,7 +164,10 @@ pub const PyByteArray_Size = pycall.PyByteArray_Size;
 pub const HashNotImplemented = pycall.HashNotImplemented;
 pub const PyObject_ClearWeakRefs = pycall.PyObject_ClearWeakRefs;
 pub const pyo3zig_make_ready_awaitable = pycall.pyo3zig_make_ready_awaitable;
+pub const pyo3zig_make_stop_async_awaitable = pycall.pyo3zig_make_stop_async_awaitable;
 pub const Py_am_await = pytypes.Py_am_await;
+pub const Py_am_aiter = pytypes.Py_am_aiter;
+pub const Py_am_anext = pytypes.Py_am_anext;
 
 pub const PyDateTime_Import = pycall.PyDateTime_Import;
 pub const pyo3zig_PyDateTime_Check = pycall.pyo3zig_PyDateTime_Check;

@@ -360,6 +360,10 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
     const has_call = @hasDecl(T, "__call__");
     // Awaitable: __await__(self) returns the value `await obj` resolves to.
     const has_await = @hasDecl(T, "__await__");
+    // Async iteration: __anext__(self) returns ?T (null -> StopAsyncIteration);
+    // __aiter__ is optional (a type with __anext__ is its own async iterator).
+    const has_anext = @hasDecl(T, "__anext__");
+    const has_aiter = @hasDecl(T, "__aiter__") or has_anext;
     const has_doc = @hasField(@TypeOf(config), "doc");
     // Numeric conversions and in-place operators.
     const has_int = @hasDecl(T, "__int__");
@@ -1252,6 +1256,53 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
         }
     };
 
+    // am_aiter: `async for x in obj` — return the async iterator (self, or the
+    // user's __aiter__ result).
+    const AiterWrapper = struct {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
+            if (@hasDecl(T, "__aiter__")) {
+                const ptr = Cell.ptrFromObj(self_obj);
+                const fi = @typeInfo(@TypeOf(T.__aiter__)).@"fn";
+                return callFuncReturningPyObject(T.__aiter__, fi, .{ptr});
+            }
+            return zm.Py_NewRef(self_obj);
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn aiter(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
+        }
+    };
+
+    // am_anext: returns an awaitable that resolves to the next item, or one that
+    // raises StopAsyncIteration when __anext__ returns null.
+    const AnextWrapper = struct {
+        fn inner(self_obj: ?*zm.PyObject) ?*zm.PyObject {
+            const ptr = Cell.ptrFromObj(self_obj);
+            const RetT = @typeInfo(@TypeOf(T.__anext__)).@"fn".return_type.?;
+            const maybe = if (@typeInfo(RetT) == .error_union)
+                (T.__anext__(ptr) catch |err| {
+                    errors.setPyExceptionIfNeeded(err);
+                    return null;
+                })
+            else
+                T.__anext__(ptr);
+            if (maybe) |v| {
+                const obj = funcwrap.returnToPyObjectValue(v) orelse return null;
+                defer zm.Py_XDECREF(obj);
+                return zm.pyo3zig_make_ready_awaitable(obj);
+            }
+            return zm.pyo3zig_make_stop_async_awaitable();
+        }
+        fn thunk(p: ?*anyopaque) callconv(.c) ?*zm.PyObject {
+            return inner(@as(?*zm.PyObject, @ptrCast(@alignCast(p))));
+        }
+        fn anext(self_obj: ?*zm.PyObject) callconv(.c) ?*zm.PyObject {
+            return zm.pz_guard(&thunk, @ptrCast(self_obj));
+        }
+    };
+
     // GC support for classes holding PyObject fields: visit fields in traverse,
     // clear them in clear (breaks reference cycles).
     const GcWrapper = struct {
@@ -1470,6 +1521,8 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             if (has_iter) slot_count += 1;
             if (has_call) slot_count += 1;
             if (has_await) slot_count += 1;
+            if (has_aiter) slot_count += 1;
+            if (has_anext) slot_count += 1;
             if (has_doc) slot_count += 1;
             if (has_add) slot_count += 1;
             if (has_sub) slot_count += 1;
@@ -1580,6 +1633,14 @@ pub fn PyClass(comptime T: type, comptime config: anytype) type {
             }
             if (has_await) {
                 slots[slot_idx] = .{ .slot = zm.Py_am_await, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&AwaitWrapper.awaitFn))) };
+                slot_idx += 1;
+            }
+            if (has_aiter) {
+                slots[slot_idx] = .{ .slot = zm.Py_am_aiter, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&AiterWrapper.aiter))) };
+                slot_idx += 1;
+            }
+            if (has_anext) {
+                slots[slot_idx] = .{ .slot = zm.Py_am_anext, .pfunc = @constCast(@as(*const anyopaque, @ptrCast(&AnextWrapper.anext))) };
                 slot_idx += 1;
             }
             if (has_doc) {

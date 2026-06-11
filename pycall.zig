@@ -95,6 +95,8 @@ pub fn PyDateTime_Import() c_int {
 
 // One-shot awaitable: `await obj` resolves immediately to the carried value.
 pub extern fn pyo3zig_make_ready_awaitable(?*PyObject) callconv(.c) ?*PyObject;
+// Awaitable that raises StopAsyncIteration (terminates an `async for`).
+pub extern fn pyo3zig_make_stop_async_awaitable() callconv(.c) ?*PyObject;
 
 // weakref clearing: must run in a custom tp_dealloc before teardown so any
 // live weak references to the object are invalidated.

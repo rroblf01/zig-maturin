@@ -27,11 +27,16 @@ int pyo3zig_DateTime_microsecond(PyObject* o) { return PyDateTime_DATE_GET_MICRO
 typedef struct {
     PyObject_HEAD
     PyObject* value;
+    int is_stop; /* 1 -> raise StopAsyncIteration instead of returning value */
 } PzReadyAwaitable;
 
 static PyObject* pzra_iternext(PyObject* self) {
-    PyObject* v = ((PzReadyAwaitable*)self)->value;
-    PyErr_SetObject(PyExc_StopIteration, v ? v : Py_None);
+    PzReadyAwaitable* a = (PzReadyAwaitable*)self;
+    if (a->is_stop) {
+        PyErr_SetNone(PyExc_StopAsyncIteration);
+        return NULL;
+    }
+    PyErr_SetObject(PyExc_StopIteration, a->value ? a->value : Py_None);
     return NULL;
 }
 static PyObject* pzra_iter(PyObject* self) { Py_INCREF(self); return self; }
@@ -39,6 +44,9 @@ static void pzra_dealloc(PyObject* self) {
     Py_XDECREF(((PzReadyAwaitable*)self)->value);
     Py_TYPE(self)->tp_free(self);
 }
+/* Being its own awaitable (am_await -> self) lets it be the value returned by
+ * __anext__ and then `await`ed by the async-for machinery. */
+static PyAsyncMethods pzra_as_async = { .am_await = pzra_iter };
 static PyTypeObject PzReadyAwaitable_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name = "pyo3zig._ReadyAwaitable",
@@ -46,19 +54,25 @@ static PyTypeObject PzReadyAwaitable_Type = {
     .tp_flags = Py_TPFLAGS_DEFAULT,
     .tp_iter = pzra_iter,
     .tp_iternext = pzra_iternext,
+    .tp_as_async = &pzra_as_async,
     .tp_dealloc = pzra_dealloc,
 };
 
-/* Build a ready awaitable carrying `value` (borrows: takes its own reference).
- * Returns a new reference to the iterator, or NULL with an exception set. */
-PyObject* pyo3zig_make_ready_awaitable(PyObject* value) {
+static PyObject* pzra_new(PyObject* value, int is_stop) {
     if (PyType_Ready(&PzReadyAwaitable_Type) < 0) return NULL;
     PzReadyAwaitable* a = PyObject_New(PzReadyAwaitable, &PzReadyAwaitable_Type);
     if (!a) return NULL;
     Py_XINCREF(value);
     a->value = value;
+    a->is_stop = is_stop;
     return (PyObject*)a;
 }
+
+/* Awaitable that resolves immediately to `value` (takes its own reference). */
+PyObject* pyo3zig_make_ready_awaitable(PyObject* value) { return pzra_new(value, 0); }
+
+/* Awaitable that raises StopAsyncIteration (ends an `async for`). */
+PyObject* pyo3zig_make_stop_async_awaitable(void) { return pzra_new(NULL, 1); }
 
 /* --- Panic safety net -----------------------------------------------------
  * Zig has no stack unwinding, so a panic would normally abort the whole

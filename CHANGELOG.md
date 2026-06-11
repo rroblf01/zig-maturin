@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format is based on
 - **Awaitable instances (`__await__`)**: `await obj` resolves to whatever
   `__await__(self)` returns, via a shipped one-shot awaitable-iterator type.
   Works with `asyncio.run`. (Ready/immediate resolution — no suspension.)
+- **Async iteration (`__anext__` / `__aiter__`)**: `async for x in obj` drives
+  `__anext__(self) -> ?T` (null ends iteration); works in async comprehensions.
 - **`enum.IntEnum` classes**: `pz.enumClass(MyEnum, "Name")` exposes a Zig enum
   as a real Python `IntEnum` (registered in `.classes`); each variant becomes a
   member (`Color.RED == 0`).
@@ -92,9 +94,9 @@ All notable changes to this project are documented here. The format is based on
   orchestration beyond this release.
 - **weakref for non-GC value classes** (managed weakref needs the GC pre-header;
   a value class would need an explicit `tp_weaklistoffset` field instead).
-- **Suspending coroutines / async iteration** (`__aiter__`/`__anext__`): only
-  *ready* awaitables are supported (`__await__` resolves immediately); real
-  suspension would need a coroutine driver that yields to the event loop.
+- **Suspending coroutines**: awaitables resolve immediately (`__await__` /
+  `__anext__` are *ready*); true suspension would need a coroutine driver that
+  yields to the event loop.
 - **Inheriting from a `pz.enumClass`** as a Zig `PyClass` base (the IntEnum is a
   standalone Python type, not a Zig-backed class).
 - **Subclassing classes that need a custom destructor** (`__deinit__` or GC

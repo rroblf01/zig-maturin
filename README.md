@@ -162,6 +162,7 @@ Register the class in the module's `.classes` field.
 - Lifecycle / repr: `init`, `__deinit__` (called on GC), `__str__`, `__repr__`,
   `__hash__`, `__format__` (`format()` / f-string specs), `__call__` (callable
   instances), `__await__` (awaitable; `await obj` resolves to its return value),
+  `__aiter__`/`__anext__` (`async for x in obj`; `__anext__(self) -> ?T`),
   `__enter__`/`__exit__` (context manager, `with obj:`), `__reduce__`
   (pickle), `__getstate__`/`__setstate__`, `__bytes__` (`bytes(obj)`),
   `__floor__`/`__ceil__`/`__trunc__` (`math.*`), `__round__`, and

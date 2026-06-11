@@ -631,6 +631,25 @@ except StopIteration as e:
     check("await resolves", e.value == 42, repr(e.value))
 check("asyncio.run awaitable", asyncio.run(_await_task(m.Task(50))) == 100)
 
+
+# test_async_iteration
+async def _collect(stop):
+    out = []
+    async for x in m.ARange(stop):
+        out.append(x)
+    return out
+
+
+check("async for yields range", asyncio.run(_collect(5)) == [0, 1, 2, 3, 4])
+check("async for empty", asyncio.run(_collect(0)) == [])
+
+
+async def _acomp():
+    return [x * x async for x in m.ARange(4)]
+
+
+check("async comprehension", asyncio.run(_acomp()) == [0, 1, 4, 9])
+
 total = passed + failed
 print(
     f"\nResults: {passed}/{total} passed"

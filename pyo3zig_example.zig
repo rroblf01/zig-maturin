@@ -685,6 +685,23 @@ const Task = extern struct {
 };
 const TaskClass = pz.PyClass(Task, .{ .init_args = &.{"n"} });
 
+// Async iterator: `async for x in ARange(stop)` yields 0..stop. __anext__
+// returns ?i64 (null ends iteration); __aiter__ defaults to self.
+const ARange = extern struct {
+    cur: i64,
+    stop: i64,
+    pub fn init(stop: i64) ARange {
+        return .{ .cur = 0, .stop = stop };
+    }
+    pub fn __anext__(self: *ARange) ?i64 {
+        if (self.cur >= self.stop) return null;
+        const v = self.cur;
+        self.cur += 1;
+        return v;
+    }
+};
+const ARangeClass = pz.PyClass(ARange, .{ .init_args = &.{"stop"} });
+
 // bytearray (and bytes/str) decode to a borrowed []const u8.
 fn sum_bytes(data: []const u8) i64 {
     var total: i64 = 0;
@@ -778,7 +795,7 @@ const Mod = pz.pyModule("pyo3zig_demo", .{
         pz.pyFnNamed("dt_year", dt_year),
         pz.pyFnNamed("next_day", next_day),
     },
-    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass },
+    .classes = &[_]type{ GreeterClass, DeinitTrackerClass, Vec2Class, RangeClass, BoomableClass, MoneyClass, NodeClass, ResourceClass, SuppressorClass, ReadOnlyClass, RecorderClass, DynamicClass, Bytes8Class, BitsClass, BagClass, UnhashableClass, TempClass, AdderClass, ColorEnum, TaskClass, ARangeClass },
 });
 
 comptime {
