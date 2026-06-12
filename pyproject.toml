@@ -1,6 +1,6 @@
 [project]
 name = "zig-maturin"
-version = "1.0.0"
+version = "1.0.1"
 description = "Build and publish Zig-powered Python extensions with native cross-compilation"
 readme = "README.md"
 authors = [

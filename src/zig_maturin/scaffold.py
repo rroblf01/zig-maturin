@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import shutil
 import subprocess
+import zlib
 from pathlib import Path
 
 # URL of the zig-maturin Zig package, fetched as a Zig dependency.
@@ -206,12 +207,19 @@ comptime {{
 
 
 def _fingerprint(name: str) -> str:
-    """Derive a stable, non-zero Zig package fingerprint from the module name."""
-    digest = int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], "big")
-    # Avoid the reserved 0x0 / all-ones values Zig rejects.
-    if digest in (0x0, 0xFFFFFFFFFFFFFFFF):
-        digest = 0x1
-    return f"0x{digest:016x}"
+    """Derive a valid Zig package fingerprint from the module name.
+
+    Zig's fingerprint is `(checksum << 32) | id`, and it validates that the
+    high 32 bits equal CRC-32 of the package name — a mismatch makes
+    `zig fetch` reject build.zig.zon outright. The low 32 bits are a free
+    "id" (any value except the reserved 0x0 / all-ones), so derive a stable
+    one from the name.
+    """
+    checksum = zlib.crc32(name.encode()) & 0xFFFFFFFF
+    package_id = int.from_bytes(hashlib.sha256(name.encode()).digest()[:4], "big")
+    if package_id in (0x0, 0xFFFFFFFF):
+        package_id = 0x1
+    return f"0x{(checksum << 32 | package_id):016x}"
 
 
 def _add_dependency(root: Path) -> bool:
