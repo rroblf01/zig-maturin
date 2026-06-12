@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-06-12
+
+### Fixed
+- **Scaffolded projects failed to build** out of the box. Two bugs in
+  `zig-maturin scaffold`:
+  - The generated `build.zig.zon` fingerprint was rejected by `zig fetch`
+    (`invalid fingerprint`). Zig requires the high 32 bits to equal the CRC-32
+    of the package name; the scaffold derived the whole 64-bit value from a
+    hash. Now computed correctly (`crc32(name) << 32 | id`).
+  - The published package omitted `pyo3zig/datetime.zig` and
+    `pyo3zig/interp.zig` from `build.zig.zon`'s `.paths` whitelist, so the
+    fetched dependency failed to compile with `FileNotFound`. `.paths` now
+    lists the `pyo3zig` directory, so every module is packaged automatically.
+- **Free-threaded wheel tag** was `cp3Xt-cp3Xt-...` (both interpreter and ABI
+  tags carried the `t`); pip on a free-threaded interpreter looks for
+  `cp3X-cp3Xt-...`, so the wheel matched no compatible tag. Only the ABI tag
+  now carries the `t`. (Free-threading itself remains unsupported — see below.)
+
+### Changed
+- **Free-threading (no-GIL, PEP 703) is now documented as unsupported** and its
+  CI job removed. The C shim opts in with `Py_MOD_GIL_NOT_USED`, but a
+  free-threaded build has a wider `PyObject` header (32 bytes vs 16); the
+  Zig-side `PyModuleDef` / instance layouts are the regular-ABI structs and need
+  a free-threaded-conditional definition before the extension can load on
+  `python3.13t` / `python3.14t`. Regular (with-GIL) builds are unaffected.
+
 ## [1.0.0] - 2026-06-11
 
 First stable release. The public Zig API (`pyo3zig`, imported as `pz`) and the
